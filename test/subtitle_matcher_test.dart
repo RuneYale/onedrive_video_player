@@ -16,6 +16,51 @@ void main() {
   const matcher = SubtitleMatcher();
   const resolver = SubtitleLanguageResolver();
 
+  group('SubtitleMatcher.matchCounts', () {
+    test('counts equal per-video match() results', () {
+      final items = [
+        _file('Movie.mp4', id: 'v1'),
+        _file('Movie.srt', id: 's1'),
+        _file('Movie.en.srt', id: 's2'),
+        _file('Show.EP01.mkv', id: 'v2'),
+        _file('show.ep01.zh-Hans.ass', id: 's3'),
+        _file('Other.mp4', id: 'v3'),
+        _file('unrelated.srt', id: 's4'),
+      ];
+      final counts = matcher.matchCounts(items);
+      for (final video in items.where((i) => i.isVideo)) {
+        expect(
+          counts[video.id],
+          matcher.match(video, items).length,
+          reason: video.name,
+        );
+      }
+    });
+
+    test('one subtitle can count for multiple videos', () {
+      final items = [
+        _file('Movie.mp4', id: 'v1'),
+        _file('Movie.En.mp4', id: 'v2'),
+        _file('movie.en.srt', id: 's1'),
+      ];
+      final counts = matcher.matchCounts(items);
+      // movie.en matches 'movie' (language tag) and 'movie.en' (exact).
+      expect(counts['v1'], 1);
+      expect(counts['v2'], 1);
+    });
+
+    test('only videos get counts; folders and non-videos are skipped', () {
+      final items = [
+        _file('docs', id: 'f1', folder: true),
+        _file('notes.txt', id: 't1'),
+        _file('Movie.mp4', id: 'v1'),
+      ];
+      final counts = matcher.matchCounts(items);
+      expect(counts.keys, ['v1']);
+      expect(counts['v1'], 0);
+    });
+  });
+
   group('SubtitleMatcher.match', () {
     test('exact base-name match (Movie.mp4 ↔ Movie.srt)', () {
       final siblings = [

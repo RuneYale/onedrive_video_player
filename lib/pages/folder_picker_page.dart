@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -25,7 +27,7 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
   void initState() {
     super.initState();
     _stack.add(const _PickerFolder('root', 'OneDrive'));
-    _load();
+    unawaited(_load());
   }
 
   Future<void> _load() async {
@@ -57,24 +59,24 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
 
   void _openFolder(DriveItem item) {
     _stack.add(_PickerFolder(item.id, item.name));
-    _load();
+    unawaited(_load());
   }
 
   void _goBack() {
     if (_stack.length > 1) {
       _stack.removeLast();
-      _load();
+      unawaited(_load());
     }
   }
 
   void _confirm() {
     final folder = _stack.last;
-    ref.read(folderProvider.notifier).select(
+    unawaited(ref.read(folderProvider.notifier).select(
           SelectedFolder(id: folder.id, name: folder.name),
-        );
-    ref.read(driveProvider.notifier).setRoot(
+        ));
+    unawaited(ref.read(driveProvider.notifier).setRoot(
           DriveFolder(folder.id, folder.name),
-        );
+        ));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('"${folder.name}" set as your video folder'),
@@ -89,14 +91,21 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
     final scheme = Theme.of(context).colorScheme;
     final canGoBack = _stack.length > 1;
 
-    return Scaffold(
-      appBar: AppBar(
-        leading: canGoBack
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back_rounded),
-                onPressed: _goBack,
-              )
-            : null,
+    return PopScope(
+      // System back goes up one folder first instead of leaving the picker.
+      canPop: !canGoBack,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _goBack();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: canGoBack
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  onPressed: _goBack,
+                  tooltip: 'Up one folder',
+                )
+              : null,
         title: Text(_stack.last.name),
         actions: [
           IconButton(
@@ -104,9 +113,15 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
             tooltip: 'Use this folder',
             onPressed: _confirm,
           ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded),
+            tooltip: 'Cancel',
+            onPressed: () => Navigator.of(context).pop(),
+          ),
         ],
+        ),
+        body: _buildBody(scheme),
       ),
-      body: _buildBody(scheme),
     );
   }
 

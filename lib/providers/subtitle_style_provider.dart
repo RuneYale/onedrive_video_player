@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models/subtitle_style.dart';
@@ -11,10 +13,15 @@ final subtitleStyleServiceProvider =
 class SubtitleStyleNotifier extends Notifier<SubtitleStyle> {
   late final SubtitleStyleService _service;
 
+  /// Debounces SharedPreferences writes: slider drags emit a stream of
+  /// [update] calls and persisting every tick would hammer the disk.
+  Timer? _saveTimer;
+
   @override
   SubtitleStyle build() {
     _service = ref.read(subtitleStyleServiceProvider);
-    _load();
+    unawaited(_load());
+    ref.onDispose(() => _saveTimer?.cancel());
     return const SubtitleStyle();
   }
 
@@ -23,16 +30,23 @@ class SubtitleStyleNotifier extends Notifier<SubtitleStyle> {
     if (ref.mounted) state = style;
   }
 
-  /// Replaces the current style and persists it.
-  Future<void> update(SubtitleStyle style) async {
+  /// Applies [style] immediately (live preview in the editor and player)
+  /// but debounces the persist write; the returned future completes right
+  /// away since callers don't depend on the write landing.
+  Future<void> update(SubtitleStyle style) {
     state = style;
-    await _service.save(style);
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 400), () {
+      unawaited(_service.save(style));
+    });
+    return Future.value();
   }
 
-  /// Resets to the default style and persists it.
+  /// Resets to the default style and persists it immediately.
   Future<void> reset() async {
     const style = SubtitleStyle();
     state = style;
+    _saveTimer?.cancel();
     await _service.save(style);
   }
 }

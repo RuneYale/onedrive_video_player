@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,7 +29,7 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final drive = ref.read(driveProvider);
       if (drive.isReady && drive.items.isEmpty && !drive.loading && drive.error == null) {
-        ref.read(driveProvider.notifier).refresh();
+        unawaited(ref.read(driveProvider.notifier).refresh());
       }
     });
   }
@@ -38,12 +40,12 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     } else if (item.isVideo) {
       final siblings = ref.read(driveProvider).items;
       await Navigator.of(context).push(
-        MaterialPageRoute(
+        MaterialPageRoute<void>(
           builder: (_) => PlayerPage(video: item, siblings: siblings),
         ),
       );
       if (mounted) {
-        ref.read(playbackProgressProvider.notifier).reload();
+        await ref.read(playbackProgressProvider.notifier).reload();
       }
     }
   }
@@ -94,9 +96,10 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
             icon: const Icon(Icons.folder_open_rounded),
             tooltip: 'Change video folder',
             onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const FolderPickerPage()),
-              );
+              unawaited(Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                    builder: (_) => const FolderPickerPage()),
+              ));
             },
           ),
           IconButton(
@@ -107,7 +110,7 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
             tooltip: 'More',
             onSelected: (value) {
               if (value == 'clearall') {
-                _confirmClearAll();
+                unawaited(_confirmClearAll());
               }
             },
             itemBuilder: (_) => const [
@@ -162,6 +165,26 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
   }
 }
 
+/// Memoizes subtitle-match counts per items-list instance. [_Body.build]
+/// reruns whenever the progress provider ticks (every 5 s during playback),
+/// but the matching only recomputes when the folder contents actually
+/// change (a new list instance).
+final _subCountCache = _SubCountCache();
+
+class _SubCountCache {
+  List<DriveItem>? _items;
+  Map<String, int>? _counts;
+
+  Map<String, int> of(List<DriveItem> items) {
+    final cached = _counts;
+    if (cached != null && identical(items, _items)) return cached;
+    final counts = const SubtitleMatcher().matchCounts(items);
+    _items = items;
+    _counts = counts;
+    return counts;
+  }
+}
+
 class _Body extends StatelessWidget {
   const _Body({
     required this.drive,
@@ -195,11 +218,10 @@ class _Body extends StatelessWidget {
       );
     }
 
-    const matcher = SubtitleMatcher();
-    final subCounts = <String, int>{};
-    for (final item in drive.items) {
-      if (item.isVideo) subCounts[item.id] = matcher.match(item, drive.items).length;
-    }
+    // Memoized single-pass matching (see _subCountCache): previously this
+    // ran SubtitleMatcher.match per video (O(videos × items)) on every
+    // build, including the 5 s progress-provider ticks.
+    final subCounts = _subCountCache.of(drive.items);
 
     return RefreshIndicator(
       onRefresh: () async => onRetry(),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,7 +9,6 @@ import '../core/services/playback_progress_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/states.dart';
 import 'player_page.dart';
-import '../providers/folder_provider.dart';
 import '../providers/playback_provider.dart';
 
 /// Recent-play tab: shows videos the user has watched, sorted by most recent.
@@ -23,7 +24,7 @@ class _RecentPageState extends ConsumerState<RecentPage> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(playbackProgressProvider.notifier).reload();
+      unawaited(ref.read(playbackProgressProvider.notifier).reload());
     });
   }
 
@@ -57,8 +58,6 @@ class _RecentList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final folder = ref.watch(folderProvider);
-
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
       itemCount: entries.length,
@@ -69,7 +68,7 @@ class _RecentList extends ConsumerWidget {
           padding: const EdgeInsets.symmetric(vertical: 4),
           child: Card(
             child: InkWell(
-              onTap: () => _openRecent(context, ref, entry, folder),
+              onTap: () => _openRecent(context, ref, entry),
               onLongPress: () => _clearRecent(context, ref, entry.key),
               borderRadius: BorderRadius.circular(14),
               child: Padding(
@@ -185,7 +184,6 @@ class _RecentList extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
     MapEntry<String, PlaybackProgress> entry,
-    SelectedFolder? folder,
   ) async {
     final progress = entry.value;
     final item = DriveItem(
@@ -197,7 +195,7 @@ class _RecentList extends ConsumerWidget {
       parentId: progress.parentId,
     );
     await Navigator.of(context).push(
-      MaterialPageRoute(
+      MaterialPageRoute<void>(
         builder: (_) => PlayerPage(
           video: item,
           siblings: const [],
@@ -205,7 +203,7 @@ class _RecentList extends ConsumerWidget {
       ),
     );
     if (context.mounted) {
-      ref.read(playbackProgressProvider.notifier).reload();
+      await ref.read(playbackProgressProvider.notifier).reload();
     }
   }
 

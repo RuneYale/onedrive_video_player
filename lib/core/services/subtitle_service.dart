@@ -29,6 +29,32 @@ class SubtitleMatcher {
         (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return result;
   }
+
+  /// Counts, for every video in [items], how many external subtitles match
+  /// it — equivalent to running [match] per video, but in a single pass.
+  ///
+  /// A subtitle with base name `b` matches videos whose base name is `b`
+  /// itself (exact) or any dot-delimited prefix of `b` (language/tag
+  /// segments), so per-base-name counts are accumulated in
+  /// O(total name length) instead of O(videos × items).
+  Map<String, int> matchCounts(List<DriveItem> items) {
+    final byBaseName = <String, int>{};
+    for (final s in items) {
+      if (!s.isSubtitle) continue;
+      final base = s.baseName;
+      byBaseName.update(base, (c) => c + 1, ifAbsent: () => 1);
+      for (var i = 0; i < base.length; i++) {
+        if (base[i] == '.') {
+          byBaseName.update(base.substring(0, i), (c) => c + 1,
+              ifAbsent: () => 1);
+        }
+      }
+    }
+    return {
+      for (final item in items)
+        if (item.isVideo) item.id: byBaseName[item.baseName] ?? 0,
+    };
+  }
 }
 
 /// Resolves a human-readable language label from an external subtitle's file

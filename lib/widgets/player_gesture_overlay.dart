@@ -42,8 +42,19 @@ class PlayerGestureOverlay extends StatefulWidget {
 }
 
 class _PlayerGestureOverlayState extends State<PlayerGestureOverlay> {
+  /// Height of the bottom controls zone (seek bar etc.). Drags starting
+  /// here are left to the video controls underneath instead of being
+  /// claimed by this overlay.
+  static const double _bottomControlsZone = 120;
+
   _GestureType? _gesture;
   Offset? _start;
+
+  bool _inBottomControlsZone(double localDy) {
+    final height = context.size?.height;
+    if (height == null) return false;
+    return localDy >= height - _bottomControlsZone;
+  }
 
   // Seek state
   Duration? _seekFrom;
@@ -75,7 +86,7 @@ class _PlayerGestureOverlayState extends State<PlayerGestureOverlay> {
   // --- Horizontal drag = seek --------------------------------------------
 
   void _onHorizontalDragStart(DragStartDetails d) {
-    if (!widget.enabled) return;
+    if (!widget.enabled || _inBottomControlsZone(d.localPosition.dy)) return;
     _gesture = _GestureType.seek;
     _start = d.globalPosition;
     _seekFrom = widget.player.state.position;
@@ -91,7 +102,7 @@ class _PlayerGestureOverlayState extends State<PlayerGestureOverlay> {
 
   void _onDragEnd(DragEndDetails _) {
     if (_gesture == _GestureType.seek && _seekTo != null) {
-      widget.player.seek(_seekTo!);
+      unawaited(widget.player.seek(_seekTo!));
     }
     _gesture = null;
     _start = null;
@@ -103,7 +114,7 @@ class _PlayerGestureOverlayState extends State<PlayerGestureOverlay> {
   // --- Vertical drag = brightness / volume -------------------------------
 
   void _onVerticalDragStart(DragStartDetails d) {
-    if (!widget.enabled) return;
+    if (!widget.enabled || _inBottomControlsZone(d.localPosition.dy)) return;
     _start = d.globalPosition;
     final w = MediaQuery.of(context).size.width;
     if (d.globalPosition.dx < w / 2 &&
@@ -153,7 +164,7 @@ class _PlayerGestureOverlayState extends State<PlayerGestureOverlay> {
     final delta = -dy / h * 0.5;
     var v = helper.current + delta;
     v = v.clamp(0.0, 1.0);
-    helper.set(v);
+    unawaited(helper.set(v));
     _showIndicator(_GestureIndicatorKind.brightness, v);
   }
 
@@ -166,7 +177,7 @@ class _PlayerGestureOverlayState extends State<PlayerGestureOverlay> {
     final delta = -dy / h * 0.5;
     var v = helper.current + delta;
     v = v.clamp(0.0, 1.0);
-    helper.set(v);
+    unawaited(helper.set(v));
     _showIndicator(_GestureIndicatorKind.volume, v);
   }
 
