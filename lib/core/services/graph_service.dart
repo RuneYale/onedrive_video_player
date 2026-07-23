@@ -20,15 +20,25 @@ class GraphService {
     final path = itemId == 'root'
         ? '/me/drive/root/children'
         : '/me/drive/items/$itemId/children';
-    final res = await _dio.get<dynamic>(
+    final options =
+        Options(headers: {'Authorization': 'Bearer ${t.accessToken}'});
+    // First page carries $expand=thumbnails; @odata.nextLink already encodes
+    // the continuation parameters for subsequent pages.
+    var res = await _dio.get<dynamic>(
       '${AuthConfig.graphBase}$path',
-      queryParameters: {
-        '\$expand': 'thumbnails',
-      },
-      options: Options(headers: {'Authorization': 'Bearer ${t.accessToken}'}),
+      queryParameters: {'\$expand': 'thumbnails'},
+      options: options,
     );
-    final data = res.data as Map<String, dynamic>;
-    final value = data['value'] as List<dynamic>;
+    final value = <dynamic>[];
+    // Graph paginates at 200 items per page by default; follow
+    // @odata.nextLink (a full absolute URL) until the listing is exhausted.
+    while (true) {
+      final data = res.data as Map<String, dynamic>;
+      value.addAll(data['value'] as List<dynamic>);
+      final nextLink = data['@odata.nextLink'] as String?;
+      if (nextLink == null || nextLink.isEmpty) break;
+      res = await _dio.getUri<dynamic>(Uri.parse(nextLink), options: options);
+    }
     final items = value
         .map((e) => DriveItem.fromJson(e as Map<String, dynamic>))
         .toList();

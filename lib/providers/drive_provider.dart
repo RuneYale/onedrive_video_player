@@ -36,23 +36,28 @@ class DriveState {
 
 class DriveNotifier extends Notifier<DriveState> {
   late final GraphService _graph;
+  int _loadGen = 0;
 
   @override
   DriveState build() {
     _graph = ref.read(graphServiceProvider);
+    _loadGen = 0;
+    // Increment the load generation on dispose to cancel any in-flight load.
+    ref.onDispose(() => _loadGen++);
     return const DriveState();
   }
 
   /// Sets the root folder and loads its contents. Called when the user
   /// selects a folder (or when a saved folder is restored on startup).
   Future<void> setRoot(DriveFolder root) async {
+    final gen = ++_loadGen;
     state = DriveState(stack: [root], loading: true);
     try {
       final items = await _graph.listChildren(root.id);
-      if (!ref.mounted) return;
+      if (!ref.mounted || gen != _loadGen) return;
       state = DriveState(stack: [root], items: items, loading: false);
     } catch (e) {
-      if (!ref.mounted) return;
+      if (!ref.mounted || gen != _loadGen) return;
       state = DriveState(stack: [root], loading: false, error: e.toString());
     }
   }
@@ -60,15 +65,17 @@ class DriveNotifier extends Notifier<DriveState> {
   /// Loads the current folder (called when the browser first appears).
   Future<void> refresh() async {
     if (state.stack.isEmpty) return;
-    state = DriveState(
-        stack: state.stack, items: state.items, loading: true);
+    final gen = ++_loadGen;
+    final stack = state.stack;
+    state = DriveState(stack: stack, items: state.items, loading: true);
     try {
-      final items = await _graph.listChildren(state.current!.id);
-      state = DriveState(
-          stack: state.stack, items: items, loading: false);
+      final items = await _graph.listChildren(stack.last.id);
+      if (!ref.mounted || gen != _loadGen) return;
+      state = DriveState(stack: stack, items: items, loading: false);
     } catch (e) {
+      if (!ref.mounted || gen != _loadGen) return;
       state = DriveState(
-        stack: state.stack,
+        stack: stack,
         loading: false,
         error: e.toString(),
       );
@@ -76,12 +83,15 @@ class DriveNotifier extends Notifier<DriveState> {
   }
 
   Future<void> openFolder(DriveItem item) async {
+    final gen = ++_loadGen;
     final newStack = [...state.stack, DriveFolder(item.id, item.name)];
     state = DriveState(stack: newStack, loading: true);
     try {
       final items = await _graph.listChildren(item.id);
+      if (!ref.mounted || gen != _loadGen) return;
       state = DriveState(stack: newStack, items: items, loading: false);
     } catch (e) {
+      if (!ref.mounted || gen != _loadGen) return;
       state = DriveState(
         stack: newStack,
         loading: false,
@@ -92,12 +102,15 @@ class DriveNotifier extends Notifier<DriveState> {
 
   Future<void> goBack() async {
     if (!state.canGoBack) return;
+    final gen = ++_loadGen;
     final newStack = [...state.stack]..removeLast();
     state = DriveState(stack: newStack, loading: true);
     try {
       final items = await _graph.listChildren(newStack.last.id);
+      if (!ref.mounted || gen != _loadGen) return;
       state = DriveState(stack: newStack, items: items, loading: false);
     } catch (e) {
+      if (!ref.mounted || gen != _loadGen) return;
       state = DriveState(
         stack: newStack,
         loading: false,
