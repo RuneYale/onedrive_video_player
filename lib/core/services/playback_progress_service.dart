@@ -110,6 +110,29 @@ class PlaybackProgressService {
 
   static const _kProgressMap = 'odvp_playback_progress';
 
+  /// Maximum number of entries kept. When a save would exceed this, the
+  /// oldest entries by `updatedAt` are dropped so the stored JSON blob (which
+  /// is fully decoded/re-encoded on every save) stays small.
+  static const _kMaxEntries = 200;
+
+  /// Serializes all mutating operations (save/clear/clearAll). Every mutation
+  /// is an async read-modify-write of the whole map; without a queue a
+  /// periodic save in flight can overwrite a concurrent clear() and resurrect
+  /// a finished entry. Static (not per-instance) so that multiple service
+  /// instances sharing the same SharedPreferences backing stay serialized,
+  /// which also keeps the constructor const.
+  static Future<void> _queue = Future.value();
+
+  /// Chains [mutation] onto [_queue] so mutations run one at a time, in call
+  /// order, and returns a future that completes when this mutation is done.
+  static Future<void> _enqueue(Future<void> Function() mutation) {
+    final result = _queue.then((_) => mutation());
+    // Errors propagate to the caller via [result]; the queue itself must keep
+    // running, so swallow them on the queue branch.
+    _queue = result.catchError((Object _) {});
+    return result;
+  }
+
   Future<Map<String, PlaybackProgress>> all() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_kProgressMap);
@@ -151,28 +174,53 @@ class PlaybackProgressService {
     String? parentId,
   }) async {
     if (position <= Duration.zero) return;
-    final entries = await all();
-    final existing = entries[itemId];
-    entries[itemId] = PlaybackProgress(
-      positionSeconds: position.inMilliseconds / 1000.0,
-      durationSeconds: duration.inMilliseconds / 1000.0,
-      updatedAt: DateTime.now(),
-      name: name ?? existing?.name,
-      thumbnailUrl: thumbnailUrl ?? existing?.thumbnailUrl,
-      size: size ?? existing?.size,
-      parentId: parentId ?? existing?.parentId,
-    );
-    await _writeAll(entries);
+    return _enqueue(() async {
+      final entries = await all();
+      final existing = entries[itemId];
+      final progress = PlaybackProgress(
+        positionSeconds: position.inMilliseconds / 1000.0,
+        durationSeconds: duration.inMilliseconds / 1000.0,
+        updatedAt: DateTime.now(),
+        name: name ?? existing?.name,
+        thumbnailUrl: thumbnailUrl ?? existing?.thumbnailUrl,
+        size: size ?? existing?.size,
+        parentId: parentId ?? existing?.parentId,
+      );
+      if (progress.isFinished) {
+        // Do not store ~100% resume points; a finished video restarts from
+        // the beginning next time.
+        entries.remove(itemId);
+      } else {
+        entries[itemId] = progress;
+      }
+      _evictOldest(entries);
+      await _writeAll(entries);
+    });
   }
 
   Future<void> clear(String itemId) async {
-    final entries = await all();
-    if (entries.remove(itemId) != null) await _writeAll(entries);
+    return _enqueue(() async {
+      final entries = await all();
+      if (entries.remove(itemId) != null) await _writeAll(entries);
+    });
   }
 
   Future<void> clearAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_kProgressMap);
+    return _enqueue(() async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kProgressMap);
+    });
+  }
+
+  /// Trims [entries] to at most [_kMaxEntries] by dropping the oldest
+  /// `updatedAt` entries. Mutates the map in place.
+  static void _evictOldest(Map<String, PlaybackProgress> entries) {
+    if (entries.length <= _kMaxEntries) return;
+    final keys = entries.keys.toList()
+      ..sort((a, b) => entries[a]!.updatedAt.compareTo(entries[b]!.updatedAt));
+    for (var i = 0; i < keys.length - _kMaxEntries; i++) {
+      entries.remove(keys[i]);
+    }
   }
 
   Future<void> _writeAll(Map<String, PlaybackProgress> entries) async {

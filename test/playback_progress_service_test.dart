@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:onedrive_video_player/core/services/playback_progress_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -244,6 +246,87 @@ void main() {
       expect(p, isNotNull);
       expect(p!.parentId, 'folderABC');
       expect(p.positionSeconds, closeTo(20, 0.01));
+    });
+
+    test('clear wins over a concurrent in-flight save (no resurrection)',
+        () async {
+      // Seed an entry that will be cleared while another save is in flight.
+      await service.save(
+        'item1',
+        const Duration(seconds: 30),
+        const Duration(minutes: 2),
+      );
+      // Start a save for another item and clear item1 immediately after.
+      // Mutations are serialized, so the clear must land after the save and
+      // item1 must stay gone once both complete.
+      final saveFuture = service.save(
+        'item2',
+        const Duration(seconds: 10),
+        const Duration(minutes: 2),
+      );
+      await service.clear('item1');
+      await saveFuture;
+      expect(await service.get('item1'), isNull);
+      expect(await service.get('item2'), isNotNull);
+    });
+
+    test('save keeps at most 200 entries, dropping the oldest by updatedAt',
+        () async {
+      // Seed 210 entries with strictly increasing, deterministic updatedAt
+      // values so the eviction order is unambiguous.
+      final seeded = <String, dynamic>{};
+      for (var i = 0; i < 210; i++) {
+        seeded['v${i.toString().padLeft(3, '0')}'] = <String, dynamic>{
+          'position': 10,
+          'duration': 100,
+          'updatedAt':
+              DateTime(2026, 1, 1).add(Duration(seconds: i)).toIso8601String(),
+        };
+      }
+      SharedPreferences.setMockInitialValues({
+        'odvp_playback_progress': jsonEncode(seeded),
+      });
+      await service.save(
+        'new',
+        const Duration(seconds: 5),
+        const Duration(minutes: 1),
+      );
+      final all = await service.all();
+      expect(all.length, 200);
+      // The freshly saved entry and the newest seeded entries survive...
+      expect(all.containsKey('new'), isTrue);
+      expect(all.containsKey('v209'), isTrue);
+      expect(all.containsKey('v011'), isTrue);
+      // ...while the 11 oldest (v000..v010) are evicted.
+      expect(all.containsKey('v000'), isFalse);
+      expect(all.containsKey('v010'), isFalse);
+    });
+
+    test('saving a finished progress does not store a finished entry',
+        () async {
+      // 99 of 100 seconds is >= 95%, i.e. finished.
+      await service.save(
+        'item1',
+        const Duration(seconds: 99),
+        const Duration(seconds: 100),
+      );
+      expect(await service.get('item1'), isNull);
+    });
+
+    test('saving a finished progress removes an existing partial entry',
+        () async {
+      await service.save(
+        'item1',
+        const Duration(seconds: 50),
+        const Duration(seconds: 100),
+      );
+      expect(await service.get('item1'), isNotNull);
+      await service.save(
+        'item1',
+        const Duration(seconds: 97),
+        const Duration(seconds: 100),
+      );
+      expect(await service.get('item1'), isNull);
     });
   });
 }
