@@ -1,7 +1,7 @@
 # OneDrive Video Player — 开发进度日志
 
 > 这是一份"接续手册",记录当前项目状态、已完成工作、卡点、以及明天怎么接着干。
-> 最后更新:2026/7/9(二次更新:Azure 注册 + Windows 环境 + 实跑验证全部完成,已端到端跑通)
+> 最后更新:2026/7/23(第二十节修复计划 0-7 全部完成:analyze 零问题 + 67/67 测试通过;待提交 + 实跑验证)
 
 ---
 
@@ -649,3 +649,100 @@ D:\code\project\onedrive_video_player\
 ---
 
 *本次小结:字幕选择从底部表改为视频上的浮窗面板(不挡字幕、可连续切换、scrim/返回键/Esc 关闭);外挂字幕按文件名解析出语言名 + 格式 chip + 分组,可读性大幅提升;自定义外观改为弹窗。analyze 零问题、42 测试全过、Windows 构建跑通。下次:实跑验证浮窗交互 + Android 构建实测。*
+
+---
+
+## 二十、2026/7/23 全项目审查 + 修复计划(断点记录,接续用)
+
+**背景**:结合 skills(静态分析 / 架构最佳实践 / UI)对全项目做了一次两路代码审查。**发现工作区与上文状态记录不符**:19 个文件未提交,且 `flutter analyze` 实际报 1 个编译错误(`settings_page.dart:149` 用了 `driveProvider` 但缺 `../providers/drive_provider.dart` import —— 已修,analyze 重回零问题)。
+
+### 审查发现(按优先级)
+
+**🔴 高优先级**
+1. `auth_service.dart:154-181` 刷新无 single-flight:并发请求同时用同一 refresh token 刷新,微软轮换 token 后旧 token 覆盖新 token,可能触发 token 家族吊销 → 强制登出
+2. `auth_service.dart:141-151` `restore()` 把断网当登出:`catch(_)` 一律 `clear()`,离线启动即丢 session;应只在 `invalid_grant`/`interaction_required` 时清
+3. `player_page.dart:170-179` 续播 seek 在完成前置标志,demuxer 未就绪时 seek 静默丢失,随后 5s 定时保存把 0:00 写回毁掉续播点;`playback_progress_service.dart` 读-改-写无串行化,`clear()` 可被在途 `save()` 覆盖"复活"已看完视频
+4. `player_page.dart:1217+` 亮度/音量 MethodChannel 在 Android 未实现(`MainActivity.kt` 为空),异常被吞,手势是"说谎的功能";平台判断还误含 macOS
+5. `graph_service.dart:18-41` `listChildren` 无分页,>200 项的文件夹静默丢视频/字幕(需跟随 `@odata.nextLink`)
+6. 无 `_player.stream.error` 监听:下载直链约 1h 过期,长视频中途失败无 UI 无重试;错误页无 `onRetry`
+
+**🟡 中优先级**
+- `token_storage.dart` refresh token 明文存 SharedPreferences(建议 flutter_secure_storage,**需新增依赖,本次暂不做**)
+- `drive_provider.dart:80-109` openFolder/goBack 无 `ref.mounted` 检查、无 generation 令牌(AuthNotifier 有现成范式)
+- 进度 map 无界增长 + 每 5s 全量重写 JSON(封顶保留最新 200 条)
+- 网络层:手动塞 token、无 401 刷新重试、无 sendTimeout;`AuthTokens.fromJson` 硬转 `refresh_token`(RFC 6749 允许省略,会 mid-refresh 抛 TypeError)
+- `player_gesture_overlay.dart` 手势层与底部进度条抢手势(需留底部死区)
+- `subtitle_style_provider.dart` 滑块每动一下全页重建+写盘(需 debounce + 收窄 watch)
+- `browser_page.dart:201` 字幕匹配 O(n²),且进度 provider 每 5s 触发 rebuild 重算(需 memo)
+
+**🟢 低优先级(本次挑着做)**
+- `folder_picker_page.dart` 系统返回键直接退出而非回上一层(缺 PopScope)
+- 字幕选中态用索引记录,tracks 异步到达后可能错位;初始 -1 无勾(改 choice id 字符串,初始 'auto')
+- `_open()` await 后缺 mounted 检查;`_applyAudioTrack` 无 try/catch
+- `recent_page.dart:62` dead `ref.watch(folderProvider)`;`settings_page.dart:97` 版本号硬编码
+- 根目录 `.a_err.txt`/`.a_out.txt` 调试残留
+
+### 修复进度跟踪(✅=完成 🔲=未做)
+
+| # | 任务 | 状态 |
+|---|------|------|
+| 0 | settings_page 缺 import 编译错误 | ✅ 已修(analyze 零问题) |
+| 1 | 认证三件套:single-flight / restore 误清 / fromJson 硬转 | ✅ 已修(2026/7/23,见下方记录) |
+| 2 | 进度服务:写入串行化 + 条目封顶 200 + 单测 | ✅ 已修(2026/7/23,见下方记录) |
+| 3 | Graph 分页 + DriveNotifier generation 令牌 | ✅ 已修(2026/7/23,见下方记录) |
+| 4 | player_page 修复包:续播 seek 确认 / error 监听+重试 / _completed 重置 / 选中态改 id / mounted 检查 / 音轨 try-catch / 亮度平台判断+恢复原值 | ✅ 已修(2026/7/23,见下方记录) |
+| 5 | Android MainActivity 亮度/音量通道实现 | ✅ 已修(2026/7/23,见下方记录) |
+| 6 | 杂项:手势死区 / 样式 debounce / 浏览器 O(n²) memo / folder_picker PopScope / recent dead watch | ✅ 已修(2026/7/23,见下方记录) |
+| 7 | 全量验证(analyze + test)+ 更新本表 | ✅ 已通过(2026/7/23) |
+
+**项 1 完成记录(2026/7/23)**:
+- `refresh()` 改 single-flight:并发共享 `_refreshing`,完成即清空;`restore`/`ensureTokens` 都走它。
+- 新增 `SessionExpiredException`(仅 token 端点返回 `invalid_grant`/`interaction_required` 时抛):`restore()` 只有此时才清 session,断网/超时/5xx 保留缓存 session(下次 `ensureTokens` 自动重试刷新);`ensureTokens()` 遇 SessionExpired 先 `signOut()` 再抛,避免拿死 token 反复试。
+- `_doRefresh` 传 `fallbackRefreshToken`:RFC 6749 允许刷新响应省略 `refresh_token`,此时保留旧 token。
+- 新增 `test/auth_service_test.dart` 10 用例(假 HttpClientAdapter 脚本化 Dio + SharedPreferences mock)。验证:`flutter analyze` 零问题;`flutter test` **61/61 全过**。
+- 顺手排除阻塞验证的他项错误(功能仍属原任务,未替他项收尾):`graph_service` 分页用了 `dio.getUri` 不存在的 `queryParameters` 参数(编译错误 → 首页改回 `dio.get`+query,后续页 `getUri`,分页逻辑不变);`playback_progress_service_test` 补 `dart:convert` import;删两处死代码 `_deviceCodeDeadline`(auth_service)和 `_inBottomControlsZone`(手势层;项 6 做死区时需重建)。
+
+**项 2 完成记录(2026/7/23)**:
+- 静态 `_queue`/`_enqueue` 串行化所有写操作(save/clear/clearAll):mutation 按调用顺序逐个执行;错误只传给调用方 future,队列自身 `catchError` 吞掉继续走。静态队列让多个 const 实例共享同一 SharedPreferences 后端时仍保持串行。
+- `save` 行为修正:已看完(≥95%)时**移除**条目而不是存一个"快播完"的续播点(下次从头播);配合串行化,`clear()` 不会再被在途 `save()` 覆盖"复活"。
+- `_kMaxEntries = 200`:`_evictOldest` 按 `updatedAt` 淘汰最旧条目,控制每 5s 全量重写 JSON 的体积。
+- 新增 4 个单测:clear 胜过并发 save(不复活)/ 210 条→200 条淘汰最旧 11 条 / 看完不存 / 看完移除已有部分进度。验证:`flutter analyze` 零问题;playback 测试文件 **24/24**、全量 **61/61** 通过。
+
+**项 3 完成记录(2026/7/23)**:
+- **Graph 分页**:`listChildren` 跟随 `@odata.nextLink`(完整绝对 URL)翻页直到取尽;首页带 `$expand=thumbnails`,后续页用 nextLink 原样请求(Graph 每页默认 200 项,>200 的文件夹不再丢视频/字幕)。项 1 时已修掉其中的编译错误(`getUri` 无 `queryParameters` 参数)。
+- **DriveNotifier generation 令牌**:`_loadGen`(范式同 AuthNotifier `_pollGen`):`setRoot`/`refresh`/`openFolder`/`goBack` 全部 `++_loadGen` 并在 await 后检查 `ref.mounted && gen == _loadGen` 才写 state;`ref.onDispose` 时 `++_loadGen` 使在途加载失效。快速连点文件夹/返回时旧请求落地不会覆盖新状态。
+- 新增 `test/graph_service_test.dart` 3 用例(假 HttpClientAdapter):跨页合并 / 首页带 $expand 后续页不带 / 文件夹在前+大小写不敏感排序。验证:`flutter analyze` 零问题;全量 **64/64** 通过。
+
+**项 4 完成记录(2026/7/23)**:
+- **续播 seek 确认**:`_seekToSavedAndPlay` 改异步确认环 — seek+play 后轮询 `_player.state.position`,2s 容差内到达才置 `_resumeSeekDone`,否则重试至多 5 次(每次 3s 窗口,放弃则从头播);`_resumeInProgress` 防 `_open`/`_onDuration` 双触发;**确认前 `_onPosition` 暂停 5s 定时保存**,0:00 不再写回毁掉续播点。(re)open 时重置 `_resumeSeekDone = false`,重试也能重新续播。
+- **error 监听+重试**:订阅 `_player.stream.error` → 置 `_error`(直链约 1h 过期/断网不再冻屏);`ErrorState` 接上 `onRetry` → `_retry()` 重走 `_open()` 重新解析下载直链;流订阅只在首次创建,重试复用(防泄漏)。
+- **_completed 重置**:`_onPosition` 检测到播完后位置回退到 <95%(用户回拖/重播)→ `_completed = false`,恢复进度跟踪与 dispose 保存。
+- **选中态改 id**:`_selected`(int 索引) → `_selectedSubtitleId`(String,初始 `'auto'`):tracks 异步到达不再错位,初始也有勾选(与播放器默认一致)。
+- **mounted 检查**:`_open` 各 await 后补 `if (!mounted) return;`;dispose 先置 `_disposed` 再 dispose player,续播确认环安全退出。
+- **音轨 try-catch**:`_applyAudioTrack` 失败弹 SnackBar('Could not switch audio track')。
+- **亮度平台判断+恢复原值**:亮度/音量 helper 只在 `Platform.isAndroid` 创建(原条件误含 macOS/iOS);`reset()` 恢复打开播放器时捕获的系统亮度 `_initial`(原硬编码回 0.5)。
+- 验证:`flutter analyze` 零问题;全量 **64/64** 通过。播放器交互无单测(media_kit 需真机),改动为状态机/生命周期逻辑,analyze + 既有测试回归通过。
+
+**项 5 完成记录(2026/7/23)**:
+- `MainActivity.kt` 实现两个 MethodChannel(与 Dart 侧 `com.example.app/brightness`、`com.example.app/volume` 对齐),手势调亮度/音量从"说谎的功能"变成真的。
+- **亮度**:窗口级 `screenBrightness` override — 不需要 `WRITE_SETTINGS` 权限,且只影响本 Activity;`getBrightness` 先读窗口值,未设置(-1=跟随系统)时回退读系统亮度(读取不需要权限),与项 4 的 `_initial` 恢复原值配合闭环。
+- **音量**:`AudioManager.STREAM_MUSIC` 离散步进 ↔ 0.0–1.0 比例映射;`setVolume` flags=0(不弹系统音量条,播放器有自己的手势指示器)。
+- 验证:`gradlew :app:compileDebugKotlin` **BUILD SUCCESSFUL**(2m5s;`package_info_plus` 有一条增量缓存非致命警告,与本次改动无关)。真机手势效果待实跑(需 Android 设备,未做)。
+- 备注:机器上 gradlew 需 `JAVA_HOME`(用 Android Studio 自带 `C:\Program Files\Android\Android Studio\jbr`)。
+
+**项 6 完成记录(2026/7/23)**:
+- **手势死区**:`_bottomControlsZone = 120` 重建并接线 — `_onHorizontalDragStart`/`_onVerticalDragStart` 用 `d.localPosition.dy` 判定,底部 120px 内发起的拖拽让给视频控件(进度条),不再被手势层抢走。
+- **样式 debounce**:`SubtitleStyleNotifier.update` 立即更新 state(保留实时预览),写盘改 400ms Timer debounce;`reset` 取消待写并立即落盘;`ref.onDispose` 取消定时器。滑块拖动不再每 tick 写盘。
+- **浏览器 O(n²) memo**:`SubtitleMatcher` 新增 `matchCounts(items)` 单次遍历实现(字幕 baseName `b` 命中"`b` 本身 + 其所有点分前缀"的视频,与逐视频 `match()` 等价;O(名称总长) vs 原 O(视频数×条目数));`browser_page` 用 `_SubCountCache` 按 items 列表实例 memo,进度 provider 每 5s 的 rebuild 不再重算。新增 3 个单测:与 `match()` 逐视频对拍 / 一个字幕可计入多个视频 / 只有视频有计数。
+- **folder_picker PopScope**:系统返回键在子文件夹先回上一层(`canPop: !canGoBack`),根层才退出。
+- **recent dead watch**:删 `_RecentList` 的 `ref.watch(folderProvider)` — 该值仅透传给 `_openRecent` 且从未使用;连同 `_openRecent` 的 `SelectedFolder?` 参数和 `folder_provider` import 一并移除,文件夹切换不再白触发 Recent 列表重建。
+- 验证:`flutter analyze` 零问题;全量 **67/67** 通过。
+
+**项 7 完成记录(2026/7/23)**:
+- 最终全量验证:`flutter analyze` → **No issues found**;`flutter test` → **67/67 全过**(原 42 + 项 1 认证 10 例 + 项 2 进度 4 例 + 项 3 Graph 3 例 + 项 6 字幕计数 3 例 + 期间其他增补)。
+- 顺手清理根目录调试残留 `.a_err.txt` / `.a_out.txt`。
+- **修复计划 0-7 全部完成。** 遗留:19+ 个未提交文件建议尽快提交;Windows/Android 实跑验证(续播确认、error 重试、手势死区、Android 亮度/音量通道)仍需真机过一遍。
+
+**不做/缓做**:flutter_secure_storage(新依赖,需用户确认);Dio 401 拦截器(改动大,列后续);沉浸式状态栏、motion.dart 首屏动画优化、版本号 package_info_plus(纯打磨,列后续)。
+
+*下次接续:修复计划已全部完成。建议顺序:① 提交 19+ 个未提交文件;② Windows/Android 实跑验证(重点:续播确认环、error 页重试、手势死区、Android 亮度/音量手势);③ 缓做项按需启动:flutter_secure_storage、Dio 401 拦截器、沉浸式状态栏、motion.dart 首屏动画、package_info_plus 版本号。*
