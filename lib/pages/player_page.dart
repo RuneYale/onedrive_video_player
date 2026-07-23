@@ -14,6 +14,7 @@ import '../core/theme/app_theme.dart';
 import '../core/widgets/states.dart';
 import '../providers/drive_provider.dart';
 import '../providers/playback_provider.dart';
+import '../providers/subtitle_style_provider.dart';
 import '../widgets/player_gesture_overlay.dart';
 import '../widgets/speed_picker.dart';
 import '../widgets/subtitle_controls.dart';
@@ -41,7 +42,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   PlaybackProgress? _savedProgress;
   bool _wantsResume = false;
   bool _resumeSeekDone = false;
+  bool _resumeInProgress = false;
   bool _completed = false;
+  bool _disposed = false;
 
   bool _locked = false;
 
@@ -50,11 +53,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   StreamSubscription<bool>? _completedSub;
   StreamSubscription<Tracks>? _tracksSub;
   StreamSubscription<Track>? _trackSub;
+  StreamSubscription<String>? _errorSub;
   DateTime? _lastSave;
 
   List<DriveItem> _externalSubs = const [];
   Tracks _tracks = const Tracks();
-  int _selected = -1;
+
+  /// Id of the selected subtitle choice (see [_choices]). Stored as an id,
+  /// not an index, because the choice list changes when tracks arrive
+  /// asynchronously; defaults to `'auto'`, the player's own default.
+  String _selectedSubtitleId = 'auto';
   String? _loadingSubtitleId;
 
   /// Whether the floating subtitle selection panel is open over the video.
@@ -82,11 +90,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     );
     _controller = VideoController(_player);
     _progress = ref.read(playbackProgressServiceProvider);
-    if (!Platform.isWindows && !Platform.isLinux) {
+    // Only Android has the brightness/volume MethodChannel implementations.
+    if (Platform.isAndroid) {
       _brightnessHelper = _PlatformBrightnessHelper();
       _volumeHelper = _PlatformVolumeHelper();
     }
-    _open();
+    unawaited(_open());
   }
 
   Future<void> _open() async {
@@ -115,31 +124,50 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           // Ignore — playback proceeds without external subtitles.
         }
       }
+      if (!mounted) return;
 
       final url = await ref
           .read(graphServiceProvider)
           .getDownloadUrl(widget.video.id);
+      if (!mounted) return;
 
-      _positionSub = _player.stream.position.listen(_onPosition);
-      _durationSub = _player.stream.duration.listen(_onDuration);
-      _completedSub = _player.stream.completed.listen(_onCompleted);
-      _tracksSub = _player.stream.tracks.listen((t) {
-        if (!mounted) return;
-        setState(() => _tracks = t);
-      });
-      _tracks = _player.state.tracks;
-      _trackSub = _player.stream.track.listen((t) {
-        if (!mounted) return;
-        setState(() => _currentTrack = t);
-      });
-      _currentTrack = _player.state.track;
+      // Subscriptions are created once; retries (via [_retry]) reuse them.
+      if (_positionSub == null) {
+        _positionSub = _player.stream.position.listen(_onPosition);
+        _durationSub = _player.stream.duration.listen(_onDuration);
+        _completedSub = _player.stream.completed.listen(_onCompleted);
+        _tracksSub = _player.stream.tracks.listen((t) {
+          if (!mounted) return;
+          setState(() => _tracks = t);
+        });
+        _tracks = _player.state.tracks;
+        _trackSub = _player.stream.track.listen((t) {
+          if (!mounted) return;
+          setState(() => _currentTrack = t);
+        });
+        _currentTrack = _player.state.track;
+        // Playback errors (e.g. the pre-authenticated download URL expiring
+        // mid-playback, or a network drop) surface here so the user gets a
+        // retry button instead of a frozen player.
+        _errorSub = _player.stream.error.listen((error) {
+          if (!mounted || error.isEmpty) return;
+          setState(() {
+            _error = error;
+            _loading = false;
+          });
+        });
+      }
 
       await _player.open(Media(url), play: false);
+      if (!mounted) return;
 
       if (_savedProgress != null) {
         _wantsResume = true;
+        // A (re)open starts from zero, so the resume seek must be re-issued
+        // and re-confirmed even if a previous open already completed it.
+        _resumeSeekDone = false;
         if (_player.state.duration > Duration.zero) {
-          _seekToSavedAndPlay();
+          unawaited(_seekToSavedAndPlay());
         }
       } else {
         await _player.play();
@@ -156,36 +184,83 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
   }
 
+  /// Retries opening the video after a playback error. The download URL is
+  /// re-resolved because the previous one may have expired.
+  void _retry() {
+    setState(() {
+      _error = null;
+      _loading = true;
+    });
+    unawaited(_open());
+  }
+
   void _onDuration(Duration duration) {
     if (!mounted) return;
     if (_wantsResume &&
         !_resumeSeekDone &&
         duration > Duration.zero &&
         _savedProgress != null) {
-      _seekToSavedAndPlay();
+      unawaited(_seekToSavedAndPlay());
     }
   }
 
-  void _seekToSavedAndPlay() {
-    if (_savedProgress == null) return;
-    _resumeSeekDone = true;
-    final position = Duration(
+  /// Seeks to the saved resume position and starts playback, then confirms
+  /// the seek actually landed: seeks issued before the demuxer is ready are
+  /// silently dropped, so the position is polled and the seek retried a few
+  /// times. While a resume is unconfirmed, [_onPosition] suspends periodic
+  /// progress saving so a still-zero position cannot overwrite the resume
+  /// point.
+  Future<void> _seekToSavedAndPlay() async {
+    if (_savedProgress == null || _resumeSeekDone || _resumeInProgress) return;
+    _resumeInProgress = true;
+    final target = Duration(
       milliseconds: (_savedProgress!.positionSeconds * 1000).round(),
     );
-    _player.seek(position);
-    _player.play();
-    _showResumeSnackBar(position);
+    try {
+      for (var attempt = 0; attempt < 5; attempt++) {
+        await _player.seek(target);
+        unawaited(_player.play());
+        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        while (DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          if (_disposed || !mounted) return;
+          if ((_player.state.position - target).abs() <
+              const Duration(seconds: 2)) {
+            _resumeSeekDone = true;
+            _showResumeSnackBar(target);
+            return;
+          }
+        }
+      }
+      // Give up gracefully: keep playing from wherever playback started.
+      _resumeSeekDone = true;
+    } catch (_) {
+      // Player disposed mid-resume or seek failed — nothing more to do.
+      _resumeSeekDone = true;
+    } finally {
+      _resumeInProgress = false;
+    }
   }
 
   void _onPosition(Duration position) {
-    if (!mounted || _completed) return;
+    if (!mounted) return;
+    // A position update after completion means the user sought back or
+    // replayed: resume progress tracking.
+    if (_completed) {
+      final d = _player.state.duration;
+      if (d <= Duration.zero || position >= d * 0.95) return;
+      _completed = false;
+    }
+    // While a resume seek is unconfirmed, do not let a still-zero position
+    // overwrite the saved resume point.
+    if (_wantsResume && !_resumeSeekDone) return;
     final now = DateTime.now();
     if (_lastSave == null ||
         now.difference(_lastSave!) >= const Duration(seconds: 5)) {
       _lastSave = now;
       final duration = _player.state.duration;
       if (position > Duration.zero) {
-        _progress.save(
+        unawaited(_progress.save(
           widget.video.id,
           position,
           duration,
@@ -193,7 +268,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           thumbnailUrl: widget.video.thumbnailUrl,
           size: widget.video.size,
           parentId: widget.video.parentId,
-        );
+        ));
       }
     }
   }
@@ -201,7 +276,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   void _onCompleted(bool completed) {
     if (!completed) return;
     _completed = true;
-    _progress.clear(widget.video.id);
+    unawaited(_progress.clear(widget.video.id));
   }
 
   void _showResumeSnackBar(Duration position) {
@@ -245,13 +320,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           final url =
               await ref.read(graphServiceProvider).getDownloadUrl(item.id);
           await _player.setSubtitleTrack(
-            SubtitleTrack.uri(url, title: item.name, language: item.baseName),
+            SubtitleTrack.uri(url, title: item.name),
           );
       }
       if (!mounted) return;
-      final idx = _choices.indexWhere((c) => c.id == choice.id);
       setState(() {
-        _selected = idx;
+        _selectedSubtitleId = choice.id;
         _loadingSubtitleId = null;
       });
     } catch (e) {
@@ -270,7 +344,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       context,
       currentSpeed: _speed,
       onSelected: (speed) {
-        _player.setRate(speed);
+        unawaited(_player.setRate(speed));
         setState(() => _speed = speed);
       },
     );
@@ -280,20 +354,27 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   @override
   void dispose() {
+    // Set first so any in-flight async loop (resume confirmation) stops
+    // before the player underneath it is disposed.
+    _disposed = true;
     final position = _player.state.position;
     final duration = _player.state.duration;
     final shouldSave = !_completed && position > const Duration(seconds: 3);
 
-    _positionSub?.cancel();
-    _durationSub?.cancel();
-    _completedSub?.cancel();
-    _tracksSub?.cancel();
-    _trackSub?.cancel();
-    _brightnessHelper?.reset();
-    _player.dispose();
+    unawaited(_positionSub?.cancel());
+    unawaited(_durationSub?.cancel());
+    unawaited(_completedSub?.cancel());
+    unawaited(_tracksSub?.cancel());
+    unawaited(_trackSub?.cancel());
+    unawaited(_errorSub?.cancel());
+    unawaited(_brightnessHelper?.reset());
+    unawaited(_player.dispose());
 
     if (shouldSave) {
-      _progress.save(
+      // Fire-and-forget: the widget is being torn down, so there is nothing
+      // to await against. The service writes through SharedPreferences which
+      // completes on its own.
+      unawaited(_progress.save(
         widget.video.id,
         position,
         duration,
@@ -301,7 +382,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         thumbnailUrl: widget.video.thumbnailUrl,
         size: widget.video.size,
         parentId: widget.video.parentId,
-      );
+      ));
     }
     super.dispose();
   }
@@ -310,9 +391,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final subtitleStyle = ref.watch(subtitleStyleProvider);
+
     Widget body;
     if (_error != null) {
-      body = ErrorState(message: _error!);
+      body = ErrorState(message: _error!, onRetry: _retry);
     } else if (_loading) {
       body = const LoadingState(label: 'Opening video…');
     } else {
@@ -334,8 +417,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     },
                     locked: _locked,
                   ),
-            subtitleViewConfiguration: const SubtitleViewConfiguration(
-              visible: false,
+            subtitleViewConfiguration: SubtitleViewConfiguration(
+              visible: true,
+              style: TextStyle(
+                fontSize: subtitleStyle.fontSize,
+                fontWeight: subtitleStyle.fontWeight,
+                color: subtitleStyle.color,
+                height: subtitleStyle.lineHeight,
+                background: subtitleStyle.showBackground
+                    ? (Paint()..color = subtitleStyle.backgroundColor)
+                    : null,
+              ),
             ),
           ),
           // Gesture overlay — only claims drags, taps fall through to Video
@@ -368,9 +460,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
 
     final choices = _choices;
-    final selectedChoice = _selected >= 0 && _selected < choices.length
-        ? choices[_selected]
-        : null;
+    _SubtitleChoice? selectedChoice;
+    for (final c in choices) {
+      if (c.id == _selectedSubtitleId) {
+        selectedChoice = c;
+        break;
+      }
+    }
 
     return PopScope(
       canPop: !_anyPanelOpen,
@@ -515,21 +611,28 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _applyAudioTrack(AudioTrack track) async {
-    await _player.setAudioTrack(track);
-    // _trackSub updates _currentTrack and rebuilds the panel, so the
-    // checkmark moves automatically — no manual setState needed.
+    try {
+      await _player.setAudioTrack(track);
+      // _trackSub updates _currentTrack and rebuilds the panel, so the
+      // checkmark moves automatically — no manual setState needed.
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not switch audio track: $e')),
+      );
+    }
   }
 
   /// Opens the subtitle appearance editor as a centered dialog (弹窗) rather
   /// than a bottom sheet, keeping it consistent with the floating picker.
   void _showAppearanceEditor(BuildContext context) {
-    showDialog<void>(
+    unawaited(showDialog<void>(
       context: context,
       builder: (ctx) => Dialog(
         insetPadding: const EdgeInsets.all(16),
         child: SubtitleStyleEditor(onClose: () => Navigator.of(ctx).pop()),
       ),
-    );
+    ));
   }
 }
 
@@ -1190,10 +1293,13 @@ class _AudioRow extends StatelessWidget {
 
 class _PlatformBrightnessHelper implements BrightnessHelper {
   double _current = 0.5;
-  bool _initialized = false;
+
+  /// The system brightness captured on init; [reset] restores it so the
+  /// player's temporary brightness changes don't leak into the system.
+  double? _initial;
 
   _PlatformBrightnessHelper() {
-    _init();
+    unawaited(_init());
   }
 
   Future<void> _init() async {
@@ -1202,8 +1308,8 @@ class _PlatformBrightnessHelper implements BrightnessHelper {
         const platform = MethodChannel('com.example.app/brightness');
         final value = await platform.invokeMethod<double>('getBrightness');
         if (value != null) {
+          _initial = value;
           _current = value;
-          _initialized = true;
         }
       } catch (_) {}
     }
@@ -1223,12 +1329,14 @@ class _PlatformBrightnessHelper implements BrightnessHelper {
     }
   }
 
+  /// Restores the brightness the device had when the player opened.
   Future<void> reset() async {
-    if (!_initialized) return;
+    final initial = _initial;
+    if (initial == null) return;
     if (Platform.isAndroid) {
       try {
         const platform = MethodChannel('com.example.app/brightness');
-        await platform.invokeMethod<void>('setBrightness', {'value': 0.5});
+        await platform.invokeMethod<void>('setBrightness', {'value': initial});
       } catch (_) {}
     }
   }
@@ -1238,7 +1346,7 @@ class _PlatformVolumeHelper implements VolumeHelper {
   double _current = 0.5;
 
   _PlatformVolumeHelper() {
-    _init();
+    unawaited(_init());
   }
 
   Future<void> _init() async {
