@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 /// Plays a short fade + upward-slide entrance once when first built, after an
@@ -36,7 +38,7 @@ class _FadeSlideInState extends State<FadeSlideIn>
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
     Future.delayed(widget.delay, () {
-      if (mounted) _controller.forward();
+      if (mounted) unawaited(_controller.forward());
     });
   }
 

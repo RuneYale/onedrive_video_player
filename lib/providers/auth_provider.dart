@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -66,27 +68,32 @@ class AuthNotifier extends Notifier<AuthState> {
     _auth = ref.read(authServiceProvider);
     _storage = ref.read(tokenStorageProvider);
     _pollGen = 0;
-    _restore();
+    unawaited(_restore());
     // Increment the poll generation on dispose to cancel any in-flight poll.
     ref.onDispose(() => _pollGen++);
-    return const AuthInitial();
+    return const AuthRestoring();
   }
 
   Future<void> _restore() async {
-    state = const AuthRestoring();
-    await _auth.restore();
-    if (!ref.mounted) return;
-    if (_auth.current != null) {
-      final name = await _storage.userName();
-      final email = await _storage.userEmail();
+    try {
+      await _auth.restore();
       if (!ref.mounted) return;
-      state = Authenticated(
-        tokens: _auth.current!,
-        displayName: name,
-        email: email,
-      );
-    } else {
-      state = const AuthUnauthenticated();
+      if (_auth.current != null) {
+        final name = await _storage.userName();
+        final email = await _storage.userEmail();
+        if (!ref.mounted) return;
+        state = Authenticated(
+          tokens: _auth.current!,
+          displayName: name,
+          email: email,
+        );
+      } else {
+        state = const AuthUnauthenticated();
+      }
+    } catch (_) {
+      // Any failure during restore (storage, refresh, profile lookup) must
+      // not leave the app stuck on a blank screen — fall back to signed out.
+      if (ref.mounted) state = const AuthUnauthenticated();
     }
   }
 
@@ -96,7 +103,7 @@ class AuthNotifier extends Notifier<AuthState> {
       final dc = await _auth.requestDeviceCode();
       _pollGen++;
       state = AuthAuthenticating(dc);
-      _poll(dc, gen: _pollGen, intervalSeconds: dc.interval);
+      unawaited(_poll(dc, gen: _pollGen, intervalSeconds: dc.interval));
     } catch (e) {
       state = AuthError(e.toString());
     }
@@ -119,13 +126,13 @@ class AuthNotifier extends Notifier<AuthState> {
     } on DeviceCodePendingException {
       await Future<void>.delayed(Duration(seconds: intervalSeconds));
       if (gen == _pollGen && state is AuthAuthenticating) {
-        _poll(dc, gen: gen, intervalSeconds: intervalSeconds);
+        unawaited(_poll(dc, gen: gen, intervalSeconds: intervalSeconds));
       }
     } on DeviceCodeSlowDownException {
       final slower = intervalSeconds + 5;
       await Future<void>.delayed(Duration(seconds: slower));
       if (gen == _pollGen && state is AuthAuthenticating) {
-        _poll(dc, gen: gen, intervalSeconds: slower);
+        unawaited(_poll(dc, gen: gen, intervalSeconds: slower));
       }
     } on DeviceCodeExpiredException catch (e) {
       if (gen == _pollGen) state = AuthError('Device code expired: ${e.message}');

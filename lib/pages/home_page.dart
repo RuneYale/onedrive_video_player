@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -83,9 +85,9 @@ class _FolderPrompt extends ConsumerWidget {
             'Choose a folder from your OneDrive to use as your video library.',
         actionLabel: 'Pick a folder',
         onAction: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const FolderPickerPage()),
-          );
+          unawaited(Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const FolderPickerPage()),
+          ));
         },
       ),
     );

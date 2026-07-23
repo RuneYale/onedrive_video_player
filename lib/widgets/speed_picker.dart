@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 /// A bottom sheet that lets the user pick a playback speed.
@@ -7,7 +9,7 @@ void showSpeedPicker(
   required double currentSpeed,
   required ValueChanged<double> onSelected,
 }) {
-  showModalBottomSheet<void>(
+  unawaited(showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     builder: (ctx) => _SpeedPicker(
@@ -17,7 +19,7 @@ void showSpeedPicker(
         onSelected(speed);
       },
     ),
-  );
+  ));
 }
 
 class _SpeedPicker extends StatelessWidget {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,7 +25,7 @@ class FolderNotifier extends Notifier<SelectedFolder?> {
 
   @override
   SelectedFolder? build() {
-    _load();
+    unawaited(_load());
     return null;
   }
 

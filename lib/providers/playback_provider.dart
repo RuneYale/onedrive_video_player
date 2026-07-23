@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/services/playback_progress_service.dart';
@@ -15,7 +17,7 @@ class PlaybackProgressNotifier
   @override
   Map<String, PlaybackProgress> build() {
     _service = ref.read(playbackProgressServiceProvider);
-    _load();
+    unawaited(_load());
     return const {};
   }
 

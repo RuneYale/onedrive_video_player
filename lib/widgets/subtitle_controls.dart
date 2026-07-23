@@ -61,6 +61,13 @@ class _SubtitleVideoControls extends StatelessWidget {
           const controls.MaterialDesktopVolumeButton(),
           const controls.MaterialDesktopPositionIndicator(),
           const Spacer(),
+          if (onLockTap != null)
+            controls.MaterialDesktopCustomButton(
+              icon: Icon(locked
+                  ? Icons.lock_rounded
+                  : Icons.lock_open_rounded),
+              onPressed: onLockTap!,
+            ),
           if (onAudioTap != null)
             controls.MaterialDesktopCustomButton(
               icon: const Icon(Icons.audiotrack_rounded),

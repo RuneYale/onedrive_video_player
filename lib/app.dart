@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -43,26 +45,29 @@ class _AuthGate extends ConsumerWidget {
 }
 
 /// Waits for the [FolderNotifier] to load the persisted folder choice, then
-/// either shows the [HomePage] (with BrowserPage if a folder was selected) or
-/// the [HomePage] with the folder-pick prompt.
-class _PostAuthInitializer extends ConsumerWidget {
+/// initializes the drive root exactly once before showing [HomePage].
+class _PostAuthInitializer extends ConsumerStatefulWidget {
   const _PostAuthInitializer();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_PostAuthInitializer> createState() =>
+      _PostAuthInitializerState();
+}
+
+class _PostAuthInitializerState extends ConsumerState<_PostAuthInitializer> {
+  bool _initialized = false;
+
+  @override
+  Widget build(BuildContext context) {
     final folder = ref.watch(folderProvider);
-    // folderProvider starts as null and loads asynchronously.
-    // While it's loading we can't distinguish "loading" from "not selected",
-    // so we check if the auth state is Authenticated and show a brief loader.
-    // In practice the SharedPreferences read is near-instant.
-    if (folder != null) {
-      // Initialize the drive with the saved root folder (once).
+    if (folder != null && !_initialized) {
+      _initialized = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final drive = ref.read(driveProvider);
         if (!drive.isReady) {
-          ref.read(driveProvider.notifier).setRoot(
+          unawaited(ref.read(driveProvider.notifier).setRoot(
                 DriveFolder(folder.id, folder.name),
-              );
+              ));
         }
       });
     }

@@ -17,7 +17,7 @@
 class AuthConfig {
   const AuthConfig._();
 
-  /// TODO(user): Replace with your Azure app's Application (client) ID.
+  /// The Azure app's Application (client) ID.
   static const String clientId = '8054f641-bd95-4328-b97a-be428b2708d2';
 
   /// Tenant used for the identity endpoints.

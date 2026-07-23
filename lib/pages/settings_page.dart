@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_provider.dart';
+import '../providers/drive_provider.dart';
 import '../providers/folder_provider.dart';
 import 'folder_picker_page.dart';
 
@@ -113,9 +116,9 @@ class SettingsPage extends ConsumerWidget {
   }
 
   void _changeFolder(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const FolderPickerPage()),
-    );
+    unawaited(Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const FolderPickerPage()),
+    ));
   }
 
   Future<void> _confirmSignOut(BuildContext context, WidgetRef ref) async {
@@ -139,8 +142,12 @@ class SettingsPage extends ConsumerWidget {
       ),
     );
     if (confirmed == true) {
-      ref.read(folderProvider.notifier).clear();
-      ref.read(authProvider.notifier).signOut();
+      // Await both so the folder choice and tokens are fully cleared before
+      // the auth gate rebuilds into the signed-out state.
+      await ref.read(folderProvider.notifier).clear();
+      await ref.read(authProvider.notifier).signOut();
+      // Drop any cached drive state from the previous account.
+      ref.invalidate(driveProvider);
     }
   }
 }
