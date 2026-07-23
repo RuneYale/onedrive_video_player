@@ -15,12 +15,24 @@ class AuthTokens {
       DateTime.now().isAfter(expiresAt.subtract(const Duration(minutes: 5)));
 
   /// Builds tokens from a token endpoint JSON response.
-  factory AuthTokens.fromJson(Map<String, dynamic> json) {
+  ///
+  /// Per RFC 6749 a refresh response MAY omit `refresh_token`; pass
+  /// [fallbackRefreshToken] on the refresh path so the previous refresh
+  /// token is kept in that case. Initial token responses must include it.
+  factory AuthTokens.fromJson(
+    Map<String, dynamic> json, {
+    String? fallbackRefreshToken,
+  }) {
     final expiresIn =
         int.tryParse(json['expires_in']?.toString() ?? '') ?? 3600;
+    final refreshToken =
+        (json['refresh_token'] as String?) ?? fallbackRefreshToken;
+    if (refreshToken == null) {
+      throw const FormatException('token response missing refresh_token');
+    }
     return AuthTokens(
       accessToken: json['access_token'] as String,
-      refreshToken: json['refresh_token'] as String,
+      refreshToken: refreshToken,
       expiresAt: DateTime.now().add(Duration(seconds: expiresIn)),
     );
   }

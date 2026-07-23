@@ -58,6 +58,14 @@ class AuthException implements Exception {
   String toString() => message;
 }
 
+/// Thrown when the token endpoint rejects the refresh token
+/// (`invalid_grant` / `interaction_required`): the session is
+/// unrecoverable and must be cleared. Any other refresh failure
+/// (offline, timeout, 5xx) is transient and must NOT clear the session.
+class SessionExpiredException extends AuthException {
+  const SessionExpiredException(super.message);
+}
+
 /// OAuth 2.0 Device Authorization Grant against the Microsoft identity
 /// platform, plus silent token refresh.
 class AuthService {
@@ -68,6 +76,12 @@ class AuthService {
 
   AuthTokens? _current;
   AuthTokens? get current => _current;
+
+  /// In-flight refresh, so concurrent callers share a single request.
+  /// Microsoft rotates refresh tokens, so parallel refreshes with the same
+  /// refresh token can overwrite `_current` with a superseded token or even
+  /// trigger token-family revocation.
+  Future<AuthTokens>? _refreshing;
 
   /// Requests a device code that the user must authorize in a browser.
   Future<DeviceCodeResponse> requestDeviceCode() async {
@@ -138,31 +152,69 @@ class AuthService {
   }
 
   /// Loads cached tokens and refreshes them if expired.
+  ///
+  /// The stored session is cleared ONLY when the server rejects the
+  /// refresh token ([SessionExpiredException]). Transient failures
+  /// (offline, timeout, 5xx) keep the cached session so the user stays
+  /// signed in; [ensureTokens] retries the refresh on the next API call.
   Future<void> restore() async {
     _current = await _storage.load();
     if (_current != null && _current!.isExpired) {
       try {
         _current = await refresh(_current!);
-      } catch (_) {
+      } on SessionExpiredException {
         _current = null;
         await _storage.clear();
+      } catch (_) {
+        // Transient refresh failure: keep the cached session.
       }
     }
   }
 
   /// Refreshes the access token using the refresh token.
-  Future<AuthTokens> refresh(AuthTokens tokens) async {
-    final res = await _dio.post<dynamic>(
-      AuthConfig.tokenEndpoint,
-      data: <String, dynamic>{
-        'client_id': AuthConfig.clientId,
-        'grant_type': 'refresh_token',
-        'refresh_token': tokens.refreshToken,
-        'scope': AuthConfig.scopesString,
-      },
-      options: Options(contentType: Headers.formUrlEncodedContentType),
+  ///
+  /// Concurrent callers share a single in-flight request (single-flight);
+  /// see [_refreshing].
+  Future<AuthTokens> refresh(AuthTokens tokens) {
+    final inFlight = _refreshing;
+    if (inFlight != null) return inFlight;
+    return _refreshing = _doRefresh(tokens).whenComplete(() {
+      _refreshing = null;
+    });
+  }
+
+  Future<AuthTokens> _doRefresh(AuthTokens tokens) async {
+    final Response<dynamic> res;
+    try {
+      res = await _dio.post<dynamic>(
+        AuthConfig.tokenEndpoint,
+        data: <String, dynamic>{
+          'client_id': AuthConfig.clientId,
+          'grant_type': 'refresh_token',
+          'refresh_token': tokens.refreshToken,
+          'scope': AuthConfig.scopesString,
+        },
+        options: Options(contentType: Headers.formUrlEncodedContentType),
+      );
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      if (data is Map<String, dynamic>) {
+        final error = data['error'];
+        if (error == 'invalid_grant' || error == 'interaction_required') {
+          throw SessionExpiredException(
+            (data['error_description'] as String?) ??
+                'The sign-in session has expired.',
+          );
+        }
+      }
+      rethrow;
+    }
+    final refreshed = AuthTokens.fromJson(
+      res.data as Map<String, dynamic>,
+      // RFC 6749 allows a refresh response to omit `refresh_token`; keep
+      // the previous one in that case instead of throwing mid-refresh.
+      fallbackRefreshToken: tokens.refreshToken,
     );
-    final refreshed = AuthTokens.fromJson(res.data as Map<String, dynamic>);
     _current = refreshed;
     final name = await _storage.userName();
     final email = await _storage.userEmail();
@@ -176,7 +228,16 @@ class AuthService {
     if (_current == null) await restore();
     final t = _current;
     if (t == null) throw StateError('Not authenticated');
-    if (t.isExpired) return refresh(t);
+    if (t.isExpired) {
+      try {
+        return await refresh(t);
+      } on SessionExpiredException {
+        // The refresh token is dead — drop the session so the app falls
+        // back to signed-out instead of retrying with a dead token.
+        await signOut();
+        rethrow;
+      }
+    }
     return t;
   }
 
