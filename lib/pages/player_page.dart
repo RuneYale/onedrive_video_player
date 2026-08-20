@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../core/models/drive_item.dart';
+import '../core/models/subtitle_style.dart';
 import '../core/services/playback_progress_service.dart';
 import '../core/services/subtitle_preference_service.dart';
 import '../core/services/subtitle_service.dart';
@@ -37,7 +39,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   final SubtitleMatcher _matcher = const SubtitleMatcher();
 
   late final Player _player = Player(
-    configuration: const PlayerConfiguration(title: 'OneDrive Video Player'),
+    configuration: PlayerConfiguration(
+      title: 'OneDrive Video Player',
+      // libass renders ASS/SSA subtitles (fonts, colors, karaoke, inline
+      // positioning) with the file's own styles, composited into the video.
+      // Disabled on Android, where libass needs a bundled font asset; there
+      // the Flutter [SubtitleView] fallback is used instead.
+      libass: defaultTargetPlatform != TargetPlatform.android,
+    ),
   );
   late final VideoController _controller = VideoController(_player);
 
@@ -75,6 +84,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   @override
   void initState() {
     super.initState();
+    // Push the user's subtitle style to libmpv whenever it changes (the
+    // editor updates the notifier live while dragging sliders).
+    ref.listenManual(subtitleStyleProvider, (previous, next) {
+      if (_disposed) return;
+      unawaited(_applySubtitleStyleToPlayer(next));
+    });
     // Brightness/volume helpers use platform channels that don't exist on
     // Windows (the underlying plugins are Android/iOS only), and the desktop
     // implementations aren't wired up in this codebase. The gesture overlay
@@ -142,6 +157,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           });
         });
       }
+
+      // Keep ASS/SSA files' own styles (sub-ass-override=no stops mpv from
+      // flattening them to the default sub-* style), then apply the user's
+      // style — which affects plain-text subtitles (SRT/VTT) only.
+      await _setMpvProperty('sub-ass-override', 'no');
+      await _applySubtitleStyleToPlayer(ref.read(subtitleStyleProvider));
 
       await _player.open(Media(url), play: false);
       if (!mounted) return;
@@ -257,6 +278,59 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   // --- Subtitles ----------------------------------------------------------
+
+  /// Low-level libmpv property setter. media_kit only exposes this on the
+  /// native player implementation (not the public [Player] API), and the
+  /// app only runs libass-rendering builds on native platforms.
+  Future<void> _setMpvProperty(String property, String value) async {
+    final platform = _player.platform;
+    if (platform is NativePlayer) {
+      await platform.setProperty(property, value);
+    }
+  }
+
+  /// Maps the user's [SubtitleStyle] to libmpv subtitle properties. Only
+  /// affects plain-text subtitles (SRT/VTT): with `sub-ass-override=no`,
+  /// ASS/SSA files keep their own embedded styles.
+  Future<void> _applySubtitleStyleToPlayer(SubtitleStyle style) async {
+    if (_disposed) return;
+    try {
+      // The app's logical font size is referenced to a 1080p window; mpv's
+      // sub-font-size is referenced to a 720p window height (scaled with the
+      // window when sub-scale-with-window is enabled), hence the 2/3 factor.
+      await _setMpvProperty(
+          'sub-font-size', (style.fontSize * 2 / 3).round().toString());
+      await _setMpvProperty(
+          'sub-bold', style.fontWeight.value >= 600 ? 'yes' : 'no');
+      await _setMpvProperty('sub-color', _toMpvColor(style.color));
+      await _setMpvProperty(
+        'sub-back-color',
+        style.showBackground
+            ? _toMpvColor(style.backgroundColor)
+            : '#00000000',
+      );
+      await _setMpvProperty(
+        'sub-border-size',
+        style.outlineEnabled
+            ? style.outlineWidth.toStringAsFixed(2)
+            : '0',
+      );
+      await _setMpvProperty(
+          'sub-border-color', _toMpvColor(style.outlineColor));
+    } catch (_) {
+      // Player not ready yet or already disposed — the style is re-applied
+      // on the next open or change, so this is safe to ignore.
+    }
+  }
+
+  /// Flutter [Color] → mpv `#AARRGGBB` (hex, uppercase).
+  static String _toMpvColor(Color color) {
+    String hex(int v) => v.toRadixString(16).padLeft(2, '0').toUpperCase();
+    return '#${hex((color.a * 255).round())}'
+        '${hex((color.r * 255).round())}'
+        '${hex((color.g * 255).round())}'
+        '${hex((color.b * 255).round())}';
+  }
 
   List<_SubtitleChoice> get _choices {
     final list = <_SubtitleChoice>[
