@@ -4,12 +4,7 @@ import 'package:onedrive_video_player/core/models/drive_item.dart';
 import 'package:onedrive_video_player/core/services/subtitle_service.dart';
 
 DriveItem _file(String name, {String? id, bool folder = false}) {
-  return DriveItem(
-    id: id ?? name,
-    name: name,
-    isFolder: folder,
-    size: 1234,
-  );
+  return DriveItem(id: id ?? name, name: name, isFolder: folder, size: 1234);
 }
 
 void main() {
@@ -105,10 +100,7 @@ void main() {
     });
 
     test('does not match a different file (Ab.srt is not for A.mp4)', () {
-      final siblings = [
-        _file('A.mp4', id: 'v1'),
-        _file('Ab.srt', id: 's1'),
-      ];
+      final siblings = [_file('A.mp4', id: 'v1'), _file('Ab.srt', id: 's1')];
       final result = matcher.match(siblings[0], siblings);
       expect(result, isEmpty);
     });
@@ -160,7 +152,15 @@ void main() {
 
   group('DriveItem subtitle helpers', () {
     test('isSubtitle true for supported extensions', () {
-      for (final n in ['a.srt', 'b.vtt', 'c.ass', 'D.SSA', 'e.sub', 'f.smi', 'g.sbv']) {
+      for (final n in [
+        'a.srt',
+        'b.vtt',
+        'c.ass',
+        'D.SSA',
+        'e.sub',
+        'f.smi',
+        'g.sbv',
+      ]) {
         expect(_file(n).isSubtitle, isTrue, reason: n);
       }
     });
@@ -195,34 +195,43 @@ void main() {
 
     test('recognizes script subtags (zh-Hans → Chinese (Simplified))', () {
       final video = _file('Movie.mp4', id: 'v');
-      expect(resolver.labelOf(video, _file('Movie.zh-Hans.srt')),
-          'Chinese (Simplified)');
-      expect(resolver.labelOf(video, _file('Movie.cht.srt')),
-          'Chinese (Traditional)');
+      expect(
+        resolver.labelOf(video, _file('Movie.zh-Hans.srt')),
+        'Chinese (Simplified)',
+      );
+      expect(
+        resolver.labelOf(video, _file('Movie.cht.srt')),
+        'Chinese (Traditional)',
+      );
     });
 
     test('finds language among multiple tag segments', () {
       final video = _file('Show.S02E01.mp4', id: 'v');
-      expect(
-          resolver.labelOf(video, _file('Show.S02E01.eng.srt')), 'English');
+      expect(resolver.labelOf(video, _file('Show.S02E01.eng.srt')), 'English');
     });
 
     test('appends (forced) qualifier', () {
       final video = _file('Movie.mp4', id: 'v');
-      expect(resolver.labelOf(video, _file('Movie.en.forced.srt')),
-          'English (forced)');
+      expect(
+        resolver.labelOf(video, _file('Movie.en.forced.srt')),
+        'English (forced)',
+      );
     });
 
     test('appends (SDH) qualifier for sdh', () {
       final video = _file('Movie.mp4', id: 'v');
       expect(
-          resolver.labelOf(video, _file('Movie.en.sdh.srt')), 'English (SDH)');
+        resolver.labelOf(video, _file('Movie.en.sdh.srt')),
+        'English (SDH)',
+      );
     });
 
     test('treats hi as SDH only alongside another language', () {
       final video = _file('Movie.mp4', id: 'v');
-      expect(resolver.labelOf(video, _file('Movie.en.hi.srt')),
-          'English (SDH)');
+      expect(
+        resolver.labelOf(video, _file('Movie.en.hi.srt')),
+        'English (SDH)',
+      );
       // 'hi' alone resolves to Hindi, not SDH.
       expect(resolver.labelOf(video, _file('Movie.hi.srt')), 'Hindi');
     });
@@ -266,6 +275,93 @@ void main() {
     test('case-insensitive', () {
       expect(resolver.nameOfCode('ENG'), 'English');
       expect(resolver.nameOfCode('JA'), 'Japanese');
+    });
+  });
+
+  group('SubtitleMatcher.pickForAutoLoad', () {
+    test('prefers Simplified Chinese over Traditional and English', () {
+      final video = _file('Movie.mp4', id: 'v');
+      final subs = [
+        _file('Movie.en.srt', id: 's-en'),
+        _file('Movie.zh-Hant.ass', id: 's-zhant'),
+        _file('Movie.zh-Hans.ass', id: 's-zhans'),
+      ];
+      expect(matcher.pickForAutoLoad(video, subs)?.id, 's-zhans');
+    });
+
+    test('plain zh and chs/zho/chi variants count as Simplified', () {
+      final video = _file('Movie.mp4', id: 'v');
+      for (final tag in ['zh', 'zh-cn', 'chs', 'zho', 'chi']) {
+        final subs = [
+          _file('Movie.en.srt', id: 's-en'),
+          _file('Movie.$tag.srt', id: 's-$tag'),
+        ];
+        expect(matcher.pickForAutoLoad(video, subs)?.id, 's-$tag', reason: tag);
+      }
+    });
+
+    test('prefers Traditional Chinese over other languages', () {
+      final video = _file('Movie.mp4', id: 'v');
+      final subs = [
+        _file('Movie.en.srt', id: 's-en'),
+        _file('Movie.cht.srt', id: 's-cht'),
+      ];
+      expect(matcher.pickForAutoLoad(video, subs)?.id, 's-cht');
+    });
+
+    test('falls back to an untagged subtitle when no Chinese exists', () {
+      final video = _file('Movie.mp4', id: 'v');
+      final subs = [
+        _file('Movie.en.srt', id: 's-en'),
+        _file('Movie.srt', id: 's-plain'),
+      ];
+      expect(matcher.pickForAutoLoad(video, subs)?.id, 's-plain');
+    });
+
+    test('falls back to another tagged language when nothing else matches', () {
+      final video = _file('Movie.mp4', id: 'v');
+      final subs = [
+        _file('Movie.fr.srt', id: 's-fr'),
+        _file('Movie.de.srt', id: 's-de'),
+      ];
+      expect(matcher.pickForAutoLoad(video, subs)?.id, 's-de');
+    });
+
+    test('prefers non-forced over forced within the same tier', () {
+      final video = _file('Movie.mp4', id: 'v');
+      final subs = [
+        _file('Movie.zh-Hans.forced.srt', id: 's-forced'),
+        _file('Movie.zh-Hans.srt', id: 's-normal'),
+      ];
+      expect(matcher.pickForAutoLoad(video, subs)?.id, 's-normal');
+    });
+
+    test('forced Simplified Chinese still beats a plain English sub', () {
+      final video = _file('Movie.mp4', id: 'v');
+      final subs = [
+        _file('Movie.en.srt', id: 's-en'),
+        _file('Movie.zh-Hans.forced.srt', id: 's-forced'),
+      ];
+      expect(matcher.pickForAutoLoad(video, subs)?.id, 's-forced');
+    });
+
+    test('returns null when nothing matches', () {
+      final video = _file('Movie.mp4', id: 'v');
+      expect(
+        matcher.pickForAutoLoad(video, [_file('Other.srt', id: 'x')]),
+        isNull,
+      );
+      expect(matcher.pickForAutoLoad(video, const []), isNull);
+    });
+
+    test('does not pick folders or non-subtitle files', () {
+      final video = _file('Movie.mp4', id: 'v');
+      final subs = [
+        _file('Movie.txt', id: 's-txt'),
+        _file('subs', id: 's-folder', folder: true),
+        _file('Movie.zh-Hans.ass', id: 's-good'),
+      ];
+      expect(matcher.pickForAutoLoad(video, subs)?.id, 's-good');
     });
   });
 }

@@ -209,15 +209,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if ((position - _lastSaved).abs() > _progressInterval) {
       _lastSaved = position;
       if (position > const Duration(seconds: 3) && !_completed) {
-        unawaited(_progress.save(
-          widget.video.id,
-          position,
-          _player.state.duration,
-          name: widget.video.name,
-          thumbnailUrl: widget.video.thumbnailUrl,
-          size: widget.video.size,
-          parentId: widget.video.parentId,
-        ));
+        unawaited(
+          _progress.save(
+            widget.video.id,
+            position,
+            _player.state.duration,
+            name: widget.video.name,
+            thumbnailUrl: widget.video.thumbnailUrl,
+            size: widget.video.size,
+            parentId: widget.video.parentId,
+          ),
+        );
       }
     }
   }
@@ -249,9 +251,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     const tolerance = Duration(seconds: 2);
     const timeout = Duration(seconds: 5);
     try {
-      await _player.stream.position.firstWhere(
-        (p) => (p - target).abs() <= tolerance,
-      ).timeout(timeout);
+      await _player.stream.position
+          .firstWhere((p) => (p - target).abs() <= tolerance)
+          .timeout(timeout);
     } catch (_) {
       // Timeout or stream error — continue anyway.
     }
@@ -269,12 +271,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   void _showResumeInfoBar(Duration position) {
     if (!mounted) return;
-    unawaited(displayInfoBar(context, builder: (context, close) {
-      return InfoBar(
-        title: Text('Resumed from ${_formatDuration(position)}'),
-        severity: InfoBarSeverity.info,
-      );
-    }, duration: const Duration(seconds: 3)));
+    unawaited(
+      displayInfoBar(
+        context,
+        builder: (context, close) {
+          return InfoBar(
+            title: Text('Resumed from ${_formatDuration(position)}'),
+            severity: InfoBarSeverity.info,
+          );
+        },
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   // --- Subtitles ----------------------------------------------------------
@@ -299,24 +307,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       // sub-font-size is referenced to a 720p window height (scaled with the
       // window when sub-scale-with-window is enabled), hence the 2/3 factor.
       await _setMpvProperty(
-          'sub-font-size', (style.fontSize * 2 / 3).round().toString());
+        'sub-font-size',
+        (style.fontSize * 2 / 3).round().toString(),
+      );
       await _setMpvProperty(
-          'sub-bold', style.fontWeight.value >= 600 ? 'yes' : 'no');
+        'sub-bold',
+        style.fontWeight.value >= 600 ? 'yes' : 'no',
+      );
       await _setMpvProperty('sub-color', _toMpvColor(style.color));
       await _setMpvProperty(
         'sub-back-color',
-        style.showBackground
-            ? _toMpvColor(style.backgroundColor)
-            : '#00000000',
+        style.showBackground ? _toMpvColor(style.backgroundColor) : '#00000000',
       );
       await _setMpvProperty(
         'sub-border-size',
-        style.outlineEnabled
-            ? style.outlineWidth.toStringAsFixed(2)
-            : '0',
+        style.outlineEnabled ? style.outlineWidth.toStringAsFixed(2) : '0',
       );
       await _setMpvProperty(
-          'sub-border-color', _toMpvColor(style.outlineColor));
+        'sub-border-color',
+        _toMpvColor(style.outlineColor),
+      );
     } catch (_) {
       // Player not ready yet or already disposed — the style is re-applied
       // on the next open or change, so this is safe to ignore.
@@ -333,10 +343,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   List<_SubtitleChoice> get _choices {
-    final list = <_SubtitleChoice>[
-      const _OffChoice(),
-      const _AutoChoice(),
-    ];
+    final list = <_SubtitleChoice>[const _OffChoice(), const _AutoChoice()];
     for (final t in _tracks.subtitle) {
       if (t.id == 'auto' || t.id == 'no') continue;
       list.add(_EmbeddedChoice(track: t));
@@ -347,8 +354,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     return list;
   }
 
-  Future<void> _applySubtitle(_SubtitleChoice choice,
-      {bool silent = false}) async {
+  Future<void> _applySubtitle(
+    _SubtitleChoice choice, {
+    bool silent = false,
+    bool persist = true,
+  }) async {
     setState(() => _loadingSubtitleId = choice.id);
     try {
       switch (choice) {
@@ -359,8 +369,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         case _EmbeddedChoice(:final track):
           await _player.setSubtitleTrack(track);
         case _ExternalChoice(:final item):
-          final url =
-              await ref.read(graphServiceProvider).getDownloadUrl(item.id);
+          final url = await ref
+              .read(graphServiceProvider)
+              .getDownloadUrl(item.id);
           await _player.setSubtitleTrack(
             SubtitleTrack.uri(url, title: item.name),
           );
@@ -370,34 +381,60 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         _selectedSubtitleId = choice.id;
         _loadingSubtitleId = null;
       });
-      // Remember the choice so re-opening this video restores it.
-      unawaited(_subtitlePref.save(widget.video.id, choice.id));
+      // Remember the choice so re-opening this video restores it. Auto-loads
+      // aren't persisted: they re-evaluate on every open (so a newly added
+      // Simplified Chinese subtitle wins next time), while explicit user
+      // picks stay fixed.
+      if (persist) {
+        unawaited(_subtitlePref.save(widget.video.id, choice.id));
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadingSubtitleId = null);
       // Silent restoration failures (stale track id, expired subtitle URL)
       // shouldn't pester the user — fall back to the default silently.
       if (silent) return;
-      unawaited(displayInfoBar(context, builder: (context, close) {
-        return InfoBar(
-          title: Text('Could not load subtitle: $e'),
-          severity: InfoBarSeverity.error,
-        );
-      }));
+      unawaited(
+        displayInfoBar(
+          context,
+          builder: (context, close) {
+            return InfoBar(
+              title: Text('Could not load subtitle: $e'),
+              severity: InfoBarSeverity.error,
+            );
+          },
+        ),
+      );
     }
   }
 
-  /// Restores the subtitle choice last saved for this video, if the choice
-  /// still exists for the current file. Embedded-track ids depend on the
-  /// demuxer's track enumeration, so those wait (briefly) for tracks to
-  /// report before matching; anything stale is ignored silently.
+  /// Restores the subtitle choice last saved for this video, or — when the
+  /// user never picked one — auto-loads the best matching external subtitle
+  /// (Simplified Chinese first). Anything stale or missing is ignored
+  /// silently.
   Future<void> _applySavedSubtitle() async {
     final savedId = await _subtitlePref.get(widget.video.id);
-    if (!mounted || _disposed || savedId == null) return;
+    if (!mounted || _disposed) return;
 
     // The user already picked a subtitle this session (or the restore for a
     // previous open completed) — don't clobber their explicit choice.
     if (_selectedSubtitleId != null) return;
+
+    // No saved preference: auto-load a related external subtitle, preferring
+    // Simplified Chinese. Silently skipped when none matches; the pick is
+    // not persisted so it re-evaluates on every open.
+    if (savedId == null) {
+      final auto = _matcher.pickForAutoLoad(widget.video, _externalSubs);
+      if (auto != null) {
+        for (final c in _choices) {
+          if (c is _ExternalChoice && c.item.id == auto.id) {
+            await _applySubtitle(c, silent: true, persist: false);
+            break;
+          }
+        }
+      }
+      return;
+    }
 
     // External subtitles come from the sibling list (already known); only
     // embedded choices require the demuxer's track report.
@@ -460,15 +497,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       // Fire-and-forget: the widget is being torn down, so there is nothing
       // to await against. The service writes through SharedPreferences which
       // completes on its own.
-      unawaited(_progress.save(
-        widget.video.id,
-        position,
-        duration,
-        name: widget.video.name,
-        thumbnailUrl: widget.video.thumbnailUrl,
-        size: widget.video.size,
-        parentId: widget.video.parentId,
-      ));
+      unawaited(
+        _progress.save(
+          widget.video.id,
+          position,
+          duration,
+          name: widget.video.name,
+          thumbnailUrl: widget.video.thumbnailUrl,
+          size: widget.video.size,
+          parentId: widget.video.parentId,
+        ),
+      );
     }
     super.dispose();
   }
@@ -564,116 +603,112 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       child: ColoredBox(
         color: AppTheme.playerSurface,
         child: ScaffoldPage(
-        padding: EdgeInsets.zero,
-        content: Focus(
-          autofocus: true,
-          onKeyEvent: (node, event) {
-            if (event is KeyDownEvent &&
-                event.logicalKey == LogicalKeyboardKey.escape) {
-              if (_anyPanelOpen) {
-                _closeAllPanels();
-              } else {
-                Navigator.of(context).pop();
+          padding: EdgeInsets.zero,
+          content: Focus(
+            autofocus: true,
+            onKeyEvent: (node, event) {
+              if (event is KeyDownEvent &&
+                  event.logicalKey == LogicalKeyboardKey.escape) {
+                if (_anyPanelOpen) {
+                  _closeAllPanels();
+                } else {
+                  Navigator.of(context).pop();
+                }
+                return KeyEventResult.handled;
               }
-              return KeyEventResult.handled;
-            }
-            return KeyEventResult.ignored;
-          },
-          child: Stack(
-            children: [
-              body,
-              // Always-visible top bar: back button + title
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  bottom: false,
-                  child: _TopBar(
-                    title: widget.video.name,
-                    onClose: () => Navigator.of(context).pop(),
-                  ),
-                ),
-              ),
-              // Floating subtitle selection panel (overlay)
-              if (_subtitlePanelOpen && !_locked)
-                Positioned.fill(
-                  child: Stack(
-                    children: [
-                      // Scrim — tap outside the panel to close it.
-                      Positioned.fill(
-                        child: TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0.0, end: 1.0),
-                          duration: const Duration(milliseconds: 150),
-                          curve: Curves.easeOut,
-                          builder: (context, t, child) => Opacity(
-                            opacity: 0.4 * t,
-                            child: child,
-                          ),
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: _closeSubtitlePanel,
-                            child: const ColoredBox(color: Colors.black),
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        top: 64,
-                        right: 16,
-                        child: _PanelEntrance(
-                          child: _SubtitlePanel(
-                          video: widget.video,
-                          choices: choices,
-                          selected: selectedChoice,
-                          loadingId: _loadingSubtitleId,
-                          onSelected: _applySubtitle,
-                          onCustomize: () => _showAppearanceEditor(context),
-                          onClose: _closeSubtitlePanel,
-                        ),
-                      ),
+              return KeyEventResult.ignored;
+            },
+            child: Stack(
+              children: [
+                body,
+                // Always-visible top bar: back button + title
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(
+                    bottom: false,
+                    child: _TopBar(
+                      title: widget.video.name,
+                      onClose: () => Navigator.of(context).pop(),
                     ),
-                    ],
                   ),
                 ),
-              // Floating audio track selection panel (overlay)
-              if (_audioPanelOpen && !_locked)
-                Positioned.fill(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0.0, end: 1.0),
-                          duration: const Duration(milliseconds: 150),
-                          curve: Curves.easeOut,
-                          builder: (context, t, child) => Opacity(
-                            opacity: 0.4 * t,
-                            child: child,
-                          ),
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: _closeAudioPanel,
-                            child: const ColoredBox(color: Colors.black),
+                // Floating subtitle selection panel (overlay)
+                if (_subtitlePanelOpen && !_locked)
+                  Positioned.fill(
+                    child: Stack(
+                      children: [
+                        // Scrim — tap outside the panel to close it.
+                        Positioned.fill(
+                          child: TweenAnimationBuilder<double>(
+                            tween: Tween(begin: 0.0, end: 1.0),
+                            duration: const Duration(milliseconds: 150),
+                            curve: Curves.easeOut,
+                            builder: (context, t, child) =>
+                                Opacity(opacity: 0.4 * t, child: child),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _closeSubtitlePanel,
+                              child: const ColoredBox(color: Colors.black),
+                            ),
                           ),
                         ),
-                      ),
-                      Positioned(
-                        top: 64,
-                        right: 16,
-                        child: _PanelEntrance(
-                          child: _AudioPanel(
-                          tracks: _audioTracks,
-                          selected: _currentTrack.audio,
-                          onSelected: _applyAudioTrack,
-                          onClose: _closeAudioPanel,
+                        Positioned(
+                          top: 64,
+                          right: 16,
+                          child: _PanelEntrance(
+                            child: _SubtitlePanel(
+                              video: widget.video,
+                              choices: choices,
+                              selected: selectedChoice,
+                              loadingId: _loadingSubtitleId,
+                              onSelected: _applySubtitle,
+                              onCustomize: () => _showAppearanceEditor(context),
+                              onClose: _closeSubtitlePanel,
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                    ],
                   ),
-                ),
-            ],
+                // Floating audio track selection panel (overlay)
+                if (_audioPanelOpen && !_locked)
+                  Positioned.fill(
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: TweenAnimationBuilder<double>(
+                            tween: Tween(begin: 0.0, end: 1.0),
+                            duration: const Duration(milliseconds: 150),
+                            curve: Curves.easeOut,
+                            builder: (context, t, child) =>
+                                Opacity(opacity: 0.4 * t, child: child),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _closeAudioPanel,
+                              child: const ColoredBox(color: Colors.black),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 64,
+                          right: 16,
+                          child: _PanelEntrance(
+                            child: _AudioPanel(
+                              tracks: _audioTracks,
+                              selected: _currentTrack.audio,
+                              onSelected: _applyAudioTrack,
+                              onClose: _closeAudioPanel,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
           ),
-        ),
         ),
       ),
     );
@@ -723,38 +758,51 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       // checkmark moves automatically �� no manual setState needed.
     } catch (e) {
       if (!mounted) return;
-      unawaited(displayInfoBar(context, builder: (context, close) {
-        return InfoBar(
-          title: Text('Could not switch audio track: $e'),
-          severity: InfoBarSeverity.error,
-        );
-      }));
+      unawaited(
+        displayInfoBar(
+          context,
+          builder: (context, close) {
+            return InfoBar(
+              title: Text('Could not switch audio track: $e'),
+              severity: InfoBarSeverity.error,
+            );
+          },
+        ),
+      );
     }
   }
 
   /// Opens the subtitle appearance editor as a Fluent ContentDialog.
   void _showAppearanceEditor(BuildContext context) {
-    unawaited(showDialog<void>(
-      context: context,
-      builder: (ctx) => ContentDialog(
-        constraints: const BoxConstraints(maxWidth: 520),
-        title: Row(
-          children: [
-            Icon(FluentIcons.font,
-                size: 20, color: FluentTheme.of(ctx).accentColor.normal),
-            const SizedBox(width: 10),
-            const Expanded(child: Text('Subtitle appearance')),
-            IconButton(
-              icon: const Icon(FluentIcons.chrome_close, size: 12),
-              onPressed: () => Navigator.of(ctx).pop(),
-            ),
-          ],
+    unawaited(
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => ContentDialog(
+          constraints: const BoxConstraints(maxWidth: 520),
+          title: Row(
+            children: [
+              Icon(
+                FluentIcons.font,
+                size: 20,
+                color: FluentTheme.of(ctx).accentColor.normal,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(child: Text('Subtitle appearance')),
+              IconButton(
+                icon: const Icon(FluentIcons.chrome_close, size: 12),
+                onPressed: () => Navigator.of(ctx).pop(),
+              ),
+            ],
+          ),
+          content: const SubtitleStyleEditor(),
+          actions: subtitleStyleEditorActions(
+            context,
+            ref,
+            onClose: () => Navigator.of(ctx).pop(),
+          ),
         ),
-        content: const SubtitleStyleEditor(),
-        actions: subtitleStyleEditorActions(context, ref,
-            onClose: () => Navigator.of(ctx).pop()),
       ),
-    ));
+    );
   }
 }
 
@@ -776,10 +824,7 @@ class _TopBar extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withValues(alpha: 0.5),
-            Colors.transparent,
-          ],
+          colors: [Colors.black.withValues(alpha: 0.5), Colors.transparent],
         ),
       ),
       child: Row(
@@ -800,8 +845,9 @@ class _TopBar extends StatelessWidget {
                 fontWeight: FontWeight.w600,
                 shadows: [
                   Shadow(
-                      blurRadius: 8,
-                      color: Colors.black.withValues(alpha: 0.54))
+                    blurRadius: 8,
+                    color: Colors.black.withValues(alpha: 0.54),
+                  ),
                 ],
               ),
             ),
@@ -827,9 +873,7 @@ class _SpeedBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.15),
-        ),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
       ),
       child: Text(
         '${speed}x',
@@ -925,8 +969,11 @@ class _LockScreenState extends State<_LockScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(FluentIcons.lock,
-                    size: 48, color: Colors.white.withValues(alpha: 0.5)),
+                Icon(
+                  FluentIcons.lock,
+                  size: 48,
+                  color: Colors.white.withValues(alpha: 0.5),
+                ),
                 const SizedBox(height: 12),
                 Button(
                   onPressed: widget.onUnlock,
@@ -1022,12 +1069,17 @@ class _SubtitlePanel extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
             child: Row(
               children: [
-                Icon(FluentIcons.closed_caption,
-                    size: 16, color: colors.accent),
+                Icon(
+                  FluentIcons.closed_caption,
+                  size: 16,
+                  color: colors.accent,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text('Subtitles',
-                      style: FluentTheme.of(context).typography.bodyStrong),
+                  child: Text(
+                    'Subtitles',
+                    style: FluentTheme.of(context).typography.bodyStrong,
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(FluentIcons.chrome_close, size: 12),
@@ -1068,27 +1120,37 @@ class _SubtitlePanel extends StatelessWidget {
               final hovered = states.contains(WidgetState.hovered);
               return AnimatedContainer(
                 duration: const Duration(milliseconds: 80),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 11,
+                ),
                 decoration: BoxDecoration(
                   color: hovered
                       ? colors.onSurface.withValues(alpha: 0.04)
                       : Colors.transparent,
                   borderRadius: const BorderRadius.vertical(
-                      bottom: Radius.circular(12)),
+                    bottom: Radius.circular(12),
+                  ),
                 ),
                 child: Row(
                   children: [
-                    Icon(FluentIcons.font,
-                        size: 14, color: colors.onSurfaceVariant),
+                    Icon(
+                      FluentIcons.font,
+                      size: 14,
+                      color: colors.onSurfaceVariant,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text('Customize appearance',
-                          style: TextStyle(
-                              fontSize: 13, color: colors.onSurface)),
+                      child: Text(
+                        'Customize appearance',
+                        style: TextStyle(fontSize: 13, color: colors.onSurface),
+                      ),
                     ),
-                    Icon(FluentIcons.chevron_right,
-                        size: 12, color: colors.onSurfaceVariant),
+                    Icon(
+                      FluentIcons.chevron_right,
+                      size: 12,
+                      color: colors.onSurfaceVariant,
+                    ),
                   ],
                 ),
               );
@@ -1153,24 +1215,24 @@ class _ChoiceTile extends StatelessWidget {
             color: selected
                 ? colors.accent.withValues(alpha: 0.10)
                 : hovered
-                    ? colors.onSurface.withValues(alpha: 0.05)
-                    : Colors.transparent,
+                ? colors.onSurface.withValues(alpha: 0.05)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
             children: [
-              Icon(choice.icon,
-                  size: 14,
-                  color:
-                      selected ? colors.accent : colors.onSurfaceVariant),
+              Icon(
+                choice.icon,
+                size: 14,
+                color: selected ? colors.accent : colors.onSurfaceVariant,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   choice.label,
                   style: TextStyle(
                     fontSize: 13,
-                    fontWeight:
-                        selected ? FontWeight.w600 : FontWeight.normal,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                     color: selected ? colors.accent : colors.onSurface,
                   ),
                   maxLines: 1,
@@ -1238,8 +1300,10 @@ class _AudioPanel extends StatelessWidget {
                 Icon(FluentIcons.headset, size: 16, color: colors.accent),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text('Audio track',
-                      style: FluentTheme.of(context).typography.bodyStrong),
+                  child: Text(
+                    'Audio track',
+                    style: FluentTheme.of(context).typography.bodyStrong,
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(FluentIcons.chrome_close, size: 12),
@@ -1266,22 +1330,26 @@ class _AudioPanel extends StatelessWidget {
                       curve: Curves.easeOut,
                       margin: const EdgeInsets.symmetric(vertical: 1),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: isSelected
                             ? colors.accent.withValues(alpha: 0.10)
                             : hovered
-                                ? colors.onSurface.withValues(alpha: 0.05)
-                                : Colors.transparent,
+                            ? colors.onSurface.withValues(alpha: 0.05)
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
                         children: [
-                          Icon(FluentIcons.music_note,
-                              size: 14,
-                              color: isSelected
-                                  ? colors.accent
-                                  : colors.onSurfaceVariant),
+                          Icon(
+                            FluentIcons.music_note,
+                            size: 14,
+                            color: isSelected
+                                ? colors.accent
+                                : colors.onSurfaceVariant,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -1300,8 +1368,11 @@ class _AudioPanel extends StatelessWidget {
                             ),
                           ),
                           if (isSelected)
-                            Icon(FluentIcons.check_mark,
-                                size: 12, color: colors.accent),
+                            Icon(
+                              FluentIcons.check_mark,
+                              size: 12,
+                              color: colors.accent,
+                            ),
                         ],
                       ),
                     );
