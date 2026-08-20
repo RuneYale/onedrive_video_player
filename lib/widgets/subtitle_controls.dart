@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/gestures.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:media_kit_video/media_kit_video_controls/media_kit_video_controls.dart'
@@ -56,6 +57,7 @@ class _FluentVideoControlsState extends State<_FluentVideoControls> {
   static const _hideDelay = Duration(seconds: 3);
 
   bool _visible = true;
+  bool _volumeOpen = false;
   Timer? _hideTimer;
 
   Player get _player => widget.state.widget.controller.player;
@@ -81,12 +83,31 @@ class _FluentVideoControlsState extends State<_FluentVideoControls> {
 
   void _showAndSchedule() {
     if (!_visible) setState(() => _visible = true);
-    _restartHideTimer();
+    // While the volume popup is open the bar must stay put.
+    if (_volumeOpen) {
+      _hideTimer?.cancel();
+    } else {
+      _restartHideTimer();
+    }
   }
 
   void _toggle() {
-    setState(() => _visible = !_visible);
+    setState(() {
+      _visible = !_visible;
+      // Hiding the bar also dismisses the volume popup so it doesn't float
+      // over the video on the next hover reveal.
+      if (!_visible) _volumeOpen = false;
+    });
     if (_visible) _restartHideTimer();
+  }
+
+  void _setVolumeOpen(bool open) {
+    setState(() => _volumeOpen = open);
+    if (open) {
+      _hideTimer?.cancel();
+    } else {
+      _restartHideTimer();
+    }
   }
 
   @override
@@ -128,6 +149,8 @@ class _FluentVideoControlsState extends State<_FluentVideoControls> {
                   child: _BottomBar(
                     player: _player,
                     locked: widget.locked,
+                    volumeOpen: _volumeOpen,
+                    onVolumeOpenChanged: _setVolumeOpen,
                     onSubtitleTap: widget.onSubtitleTap,
                     onSpeedTap: widget.onSpeedTap,
                     onAudioTap: widget.onAudioTap,
@@ -148,6 +171,8 @@ class _BottomBar extends StatelessWidget {
   const _BottomBar({
     required this.player,
     required this.locked,
+    required this.volumeOpen,
+    required this.onVolumeOpenChanged,
     required this.onSubtitleTap,
     required this.onSpeedTap,
     this.onAudioTap,
@@ -157,6 +182,8 @@ class _BottomBar extends StatelessWidget {
 
   final Player player;
   final bool locked;
+  final bool volumeOpen;
+  final ValueChanged<bool> onVolumeOpenChanged;
   final VoidCallback onSubtitleTap;
   final VoidCallback onSpeedTap;
   final VoidCallback? onAudioTap;
@@ -180,11 +207,17 @@ class _BottomBar extends StatelessWidget {
           // Seek bar
           _SeekBar(player: player, onInteract: onInteract),
           const SizedBox(height: 4),
-          // Button row
+          // Button row (Flex no longer clips children by default, so the
+          // volume popup can float above it).
           Row(
             children: [
               _PlayPauseButton(player: player, onInteract: onInteract),
-              _VolumeControl(player: player, onInteract: onInteract),
+              _VolumeControl(
+                player: player,
+                onInteract: onInteract,
+                open: volumeOpen,
+                onOpenChanged: onVolumeOpenChanged,
+              ),
               _PositionIndicator(player: player),
               const Spacer(),
               if (onLockTap != null)
@@ -193,6 +226,7 @@ class _BottomBar extends StatelessWidget {
                   tooltip: locked ? 'Unlock controls' : 'Lock controls',
                   onPressed: () {
                     onInteract();
+                    onVolumeOpenChanged(false);
                     onLockTap!();
                   },
                 ),
@@ -202,6 +236,7 @@ class _BottomBar extends StatelessWidget {
                   tooltip: 'Audio track',
                   onPressed: () {
                     onInteract();
+                    onVolumeOpenChanged(false);
                     onAudioTap!();
                   },
                 ),
@@ -210,6 +245,7 @@ class _BottomBar extends StatelessWidget {
                 tooltip: 'Subtitles',
                 onPressed: () {
                   onInteract();
+                  onVolumeOpenChanged(false);
                   onSubtitleTap();
                 },
               ),
@@ -218,6 +254,7 @@ class _BottomBar extends StatelessWidget {
                 tooltip: 'Playback speed',
                 onPressed: () {
                   onInteract();
+                  onVolumeOpenChanged(false);
                   onSpeedTap();
                 },
               ),
@@ -226,6 +263,7 @@ class _BottomBar extends StatelessWidget {
                 tooltip: 'Fullscreen',
                 onPressed: () {
                   onInteract();
+                  onVolumeOpenChanged(false);
                   unawaited(controls.toggleFullscreen(context));
                 },
               ),
@@ -262,88 +300,160 @@ class _PlayPauseButton extends StatelessWidget {
   }
 }
 
-class _VolumeControl extends StatefulWidget {
-  const _VolumeControl({required this.player, required this.onInteract});
+class _VolumeControl extends StatelessWidget {
+  const _VolumeControl({
+    required this.player,
+    required this.onInteract,
+    required this.open,
+    required this.onOpenChanged,
+  });
+
   final Player player;
   final VoidCallback onInteract;
 
-  @override
-  State<_VolumeControl> createState() => _VolumeControlState();
-}
+  /// Whether the volume popup is currently open.
+  final bool open;
 
-class _VolumeControlState extends State<_VolumeControl> {
-  final FlyoutController _flyout = FlyoutController();
-
-  @override
-  void dispose() {
-    _flyout.dispose();
-    super.dispose();
-  }
+  /// Called when the popup opens (`true`) or closes (`false`).
+  final ValueChanged<bool> onOpenChanged;
 
   @override
   Widget build(BuildContext context) {
-    final player = widget.player;
     return StreamBuilder<double>(
       stream: player.stream.volume,
       initialData: player.state.volume,
       builder: (context, snapshot) {
-        final volume = snapshot.data ?? 100.0;
-        final icon = volume <= 0
+        final volume = (snapshot.data ?? 100.0).clamp(0.0, 100.0);
+        final muted = volume <= 0;
+        final icon = muted
             ? FluentIcons.volume_disabled
             : volume < 50
                 ? FluentIcons.volume1
                 : FluentIcons.volume3;
-        return FlyoutTarget(
-          controller: _flyout,
-          child: _ControlButton(
-            icon: icon,
-            tooltip: 'Volume',
-            onPressed: () {
-              widget.onInteract();
-              _flyout.showFlyout(
-                builder: (context) => _VolumeFlyout(player: player),
-              );
-            },
-          ),
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            _ControlButton(
+              icon: icon,
+              tooltip: 'Volume',
+              onPressed: () {
+                onInteract();
+                onOpenChanged(!open);
+              },
+            ),
+            // Popup floats above the button; the stack is as wide as the
+            // button, so it overflows symmetrically on both sides.
+            if (open)
+              Positioned(
+                bottom: 42,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: _VolumePopup(
+                    player: player,
+                    volume: volume,
+                    muted: muted,
+                    onVolumeChanged: (v) => unawaited(player.setVolume(v)),
+                  ),
+                ),
+              ),
+          ],
         );
       },
     );
   }
 }
 
-class _VolumeFlyout extends StatelessWidget {
-  const _VolumeFlyout({required this.player});
+/// Vertical volume slider with percentage, mute toggle and mouse-wheel
+/// support. Floats above the volume button in the player's bottom bar.
+class _VolumePopup extends StatefulWidget {
+  const _VolumePopup({
+    required this.player,
+    required this.volume,
+    required this.muted,
+    required this.onVolumeChanged,
+  });
+
   final Player player;
+  final double volume;
+  final bool muted;
+  final ValueChanged<double> onVolumeChanged;
+
+  @override
+  State<_VolumePopup> createState() => _VolumePopupState();
+}
+
+class _VolumePopupState extends State<_VolumePopup> {
+  /// Last non-zero volume so unmute restores the previous level.
+  double _lastNonZero = 100;
+
+  void _adjust(double delta) {
+    final next = (widget.volume + delta).clamp(0.0, 100.0);
+    widget.onVolumeChanged(next);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return FlyoutContent(
-      child: SizedBox(
-        width: 200,
-        child: StreamBuilder<double>(
-          stream: player.stream.volume,
-          initialData: player.state.volume,
-          builder: (context, snapshot) {
-            final volume = snapshot.data ?? 100.0;
-            return Row(
-              children: [
-                const Icon(FluentIcons.volume3, size: 16),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Slider(
-                    value: volume.clamp(0.0, 100.0),
-                    min: 0,
-                    max: 100,
-                    onChanged: (v) => unawaited(player.setVolume(v)),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text('${volume.round()}%',
-                    style: TextStyle(
-                        fontSize: 12, fontFeatures: AppTheme.tabularFigures)),
-              ],
-            );
-          },
+    final colors = context.colors;
+    final volume = widget.volume;
+    if (volume > 0) _lastNonZero = volume;
+
+    return Listener(
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent) {
+          // A typical mouse-wheel notch is ±120 → ±10% per notch.
+          _adjust(-event.scrollDelta.dy / 12);
+        }
+      },
+      child: Container(
+        width: 72,
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colors.outlineVariant),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.30),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Text(
+              '${volume.round()}%',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: colors.onSurface,
+                fontFeatures: AppTheme.tabularFigures,
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 120,
+              child: Slider(
+                vertical: true,
+                value: volume,
+                min: 0,
+                max: 100,
+                onChanged: widget.onVolumeChanged,
+              ),
+            ),
+            const SizedBox(height: 4),
+            _ControlButton(
+              icon: widget.muted
+                  ? FluentIcons.volume_disabled
+                  : FluentIcons.volume3,
+              tooltip: widget.muted ? 'Unmute' : 'Mute',
+              onPressed: () =>
+                  widget.onVolumeChanged(widget.muted ? _lastNonZero : 0),
+            ),
+            const SizedBox(height: 8),
+          ],
         ),
       ),
     );

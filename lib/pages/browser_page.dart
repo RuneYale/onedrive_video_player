@@ -124,7 +124,7 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
               controller: _moreController,
               child: IconButton(
                 icon: const Icon(FluentIcons.more, size: 16),
-                onPressed: () => _moreController.showFlyout(
+                onPressed: () => _moreController.showFlyout<void>(
                   builder: (context) => MenuFlyout(
                     items: [
                       MenuFlyoutItem(
