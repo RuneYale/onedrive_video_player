@@ -59,7 +59,7 @@ lib/
 Layers: UI → Riverpod providers → services (auth / graph) → models.
 
 ## Prerequisites
-- Flutter 3.41+ (stable channel)
+- Flutter 3.47+ (stable channel)
 - **Windows**: Visual Studio 2022 with the "Desktop development with C++" workload
 - **Android**: Android SDK (API 21+); Android Studio recommended (provides JDK)
 

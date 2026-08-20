@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models/drive_item.dart';
@@ -23,6 +23,8 @@ class BrowserPage extends ConsumerStatefulWidget {
 }
 
 class _BrowserPageState extends ConsumerState<BrowserPage> {
+  final FlyoutController _moreController = FlyoutController();
+
   @override
   void initState() {
     super.initState();
@@ -34,13 +36,19 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     });
   }
 
+  @override
+  void dispose() {
+    _moreController.dispose();
+    super.dispose();
+  }
+
   Future<void> _openItem(DriveItem item) async {
     if (item.isFolder) {
       await ref.read(driveProvider.notifier).openFolder(item);
     } else if (item.isVideo) {
       final siblings = ref.read(driveProvider).items;
       await Navigator.of(context).push(
-        MaterialPageRoute<void>(
+        FluentPageRoute<void>(
           builder: (_) => PlayerPage(video: item, siblings: siblings),
         ),
       );
@@ -53,14 +61,13 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
   Future<void> _clearProgress(DriveItem item) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        icon: const Icon(Icons.restart_alt_rounded),
+      builder: (ctx) => ContentDialog(
         title: const Text('Clear resume position?'),
         content: Text(
           'Next time you open "${item.name}" it will start from the beginning.',
         ),
         actions: [
-          TextButton(
+          Button(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
@@ -82,53 +89,58 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     final progress = ref.watch(playbackProgressProvider);
     final notifier = ref.read(driveProvider.notifier);
 
-    return Scaffold(
-      appBar: AppBar(
+    return ScaffoldPage(
+      header: PageHeader(
         leading: drive.canGoBack
             ? IconButton(
-                icon: const Icon(Icons.arrow_back_rounded),
+                icon: const Icon(FluentIcons.back, size: 16),
                 onPressed: notifier.goBack,
               )
             : null,
         title: Text(drive.current?.name ?? 'Videos'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.folder_open_rounded),
-            tooltip: 'Change video folder',
-            onPressed: () {
-              unawaited(Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                    builder: (_) => const FolderPickerPage()),
-              ));
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: notifier.refresh,
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'More',
-            onSelected: (value) {
-              if (value == 'clearall') {
-                unawaited(_confirmClearAll());
-              }
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(
-                value: 'clearall',
-                child: Row(
-                  children: [
-                    Icon(Icons.cleaning_services_outlined),
-                    SizedBox(width: 12),
-                    Text('Clear all resume positions'),
-                  ],
+        commandBar: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Tooltip(
+              message: 'Change video folder',
+              child: IconButton(
+                icon: const Icon(FluentIcons.folder_open, size: 18),
+                onPressed: () {
+                  unawaited(Navigator.of(context).push(
+                    FluentPageRoute<void>(
+                        builder: (_) => const FolderPickerPage()),
+                  ));
+                },
+              ),
+            ),
+            Tooltip(
+              message: 'Refresh',
+              child: IconButton(
+                icon: const Icon(FluentIcons.refresh, size: 16),
+                onPressed: notifier.refresh,
+              ),
+            ),
+            FlyoutTarget(
+              controller: _moreController,
+              child: IconButton(
+                icon: const Icon(FluentIcons.more, size: 16),
+                onPressed: () => _moreController.showFlyout(
+                  builder: (context) => MenuFlyout(
+                    items: [
+                      MenuFlyoutItem(
+                        leading: const Icon(FluentIcons.broom, size: 16),
+                        text: const Text('Clear all resume positions'),
+                        onPressed: () => unawaited(_confirmClearAll()),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
-      body: _Body(
+      content: _Body(
         drive: drive,
         progress: progress,
         onOpen: _openItem,
@@ -141,14 +153,13 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
   Future<void> _confirmClearAll() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        icon: const Icon(Icons.cleaning_services_outlined),
+      builder: (ctx) => ContentDialog(
         title: const Text('Clear all resume positions?'),
         content: const Text(
           'Every video will start from the beginning next time you open it. This cannot be undone.',
         ),
         actions: [
-          TextButton(
+          Button(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
@@ -210,7 +221,7 @@ class _Body extends StatelessWidget {
     }
     if (drive.items.isEmpty) {
       return EmptyState(
-        icon: Icons.folder_open_rounded,
+        icon: FluentIcons.folder_open,
         title: 'This folder is empty',
         message: 'Drop some videos into this folder and refresh.',
         actionLabel: 'Refresh',
@@ -223,10 +234,7 @@ class _Body extends StatelessWidget {
     // build, including the 5 s progress-provider ticks.
     final subCounts = _subCountCache.of(drive.items);
 
-    return RefreshIndicator(
-      onRefresh: () async => onRetry(),
-      child: _gridView(drive.items, subCounts),
-    );
+    return _gridView(drive.items, subCounts);
   }
 
   Widget _gridView(List<DriveItem> items, Map<String, int> subCounts) {
@@ -277,117 +285,132 @@ class _GridTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
     final showResume =
         item.isVideo && progress != null && !progress!.isFinished;
 
     return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        onLongPress: showResume ? onClearProgress : null,
-        borderRadius: BorderRadius.circular(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _GridThumbnail(item: item),
-                  if (item.isFolder)
-                    Container(
-                      color: scheme.primary.withValues(alpha: 0.10),
-                      alignment: Alignment.center,
-                      child: Icon(Icons.folder_rounded,
-                          size: 48, color: scheme.primary),
-                    ),
-                  if (item.isVideo)
-                    const Positioned.fill(
-                      child: Center(child: _PlayBadge()),
-                    ),
-                  if (showResume && progress != null)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: LinearProgressIndicator(
-                        value: progress!.fraction,
-                        minHeight: 3,
-                      ),
-                    ),
-                  if (subtitleCount > 0)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(6),
+      padding: EdgeInsetsDirectional.zero,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: HoverButton(
+          onPressed: onTap,
+          onLongPress: showResume ? onClearProgress : null,
+          builder: (context, states) {
+            final hovered = states.contains(WidgetState.hovered);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _GridThumbnail(item: item),
+                      if (item.isFolder)
+                        Container(
+                          color: colors.accent.withValues(alpha: 0.10),
+                          alignment: Alignment.center,
+                          child: Icon(FluentIcons.folder_fill,
+                              size: 48, color: colors.accent),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.subtitles_rounded,
-                                size: 11, color: Colors.white),
-                            const SizedBox(width: 2),
-                            Text('$subtitleCount',
-                                style: const TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.white)),
-                          ],
+                      if (item.isVideo)
+                        const Positioned.fill(
+                          child: Center(child: _PlayBadge()),
                         ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(item.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w500,
-                          )),
-                  if (showResume && progress != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      '${_formatDuration(Duration(
-                        milliseconds:
-                            (progress!.positionSeconds * 1000).round(),
-                      ))} left off',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: scheme.onSurfaceVariant,
-                        fontFeatures: AppTheme.tabularFigures,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ] else if (item.isVideo && item.size != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      _formatFileSize(item.size),
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: scheme.onSurfaceVariant,
-                        fontFeatures: AppTheme.tabularFigures,
-                      ),
-                      maxLines: 1,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
+                      if (showResume && progress != null)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: ProgressBar(
+                            value: (progress!.fraction * 100).clamp(0, 100),
+                            strokeWidth: 3,
+                          ),
+                        ),
+                      if (subtitleCount > 0)
+                        Positioned(
+                          top: 6,
+                          right: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.6),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(FluentIcons.closed_caption,
+                                    size: 11, color: Colors.white),
+                                const SizedBox(width: 2),
+                                Text('$subtitleCount',
+                                    style: const TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      // Fluent-style hover highlight wash
+                      if (hovered)
+                        Positioned.fill(
+                          child: ColoredBox(
+                            color: colors.onSurface.withValues(alpha: 0.04),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(item.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: FluentTheme.of(context)
+                              .typography
+                              .caption
+                              ?.copyWith(
+                                fontWeight: FontWeight.w500,
+                              )),
+                      if (showResume && progress != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          '${_formatDuration(Duration(
+                            milliseconds:
+                                (progress!.positionSeconds * 1000).round(),
+                          ))} left off',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: colors.onSurfaceVariant,
+                            fontFeatures: AppTheme.tabularFigures,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ] else if (item.isVideo && item.size != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          _formatFileSize(item.size),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: colors.onSurfaceVariant,
+                            fontFeatures: AppTheme.tabularFigures,
+                          ),
+                          maxLines: 1,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -404,32 +427,32 @@ class _GridThumbnail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
     if (item.thumbnailUrl != null && item.thumbnailUrl!.isNotEmpty) {
       return CachedNetworkImage(
         imageUrl: item.thumbnailUrl!,
         fit: BoxFit.cover,
-        placeholder: (_, _) => _ThumbnailPlaceholder(scheme: scheme),
-        errorWidget: (_, _, _) => _ThumbnailPlaceholder(scheme: scheme),
+        placeholder: (_, _) => _ThumbnailPlaceholder(colors: colors),
+        errorWidget: (_, _, _) => _ThumbnailPlaceholder(colors: colors),
       );
     }
-    return _ThumbnailPlaceholder(scheme: scheme);
+    return _ThumbnailPlaceholder(colors: colors);
   }
 }
 
 class _ThumbnailPlaceholder extends StatelessWidget {
-  const _ThumbnailPlaceholder({required this.scheme});
-  final ColorScheme scheme;
+  const _ThumbnailPlaceholder({required this.colors});
+  final AppColors colors;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: scheme.surfaceContainerHigh,
+      color: colors.surfaceContainerHigh,
       alignment: Alignment.center,
       child: Icon(
-        Icons.movie_rounded,
+        FluentIcons.video,
         size: 36,
-        color: scheme.onSurfaceVariant.withValues(alpha: 0.4),
+        color: colors.onSurfaceVariant.withValues(alpha: 0.4),
       ),
     );
   }
@@ -449,9 +472,9 @@ class _PlayBadge extends StatelessWidget {
       ),
       alignment: Alignment.center,
       child: const Icon(
-        Icons.play_arrow_rounded,
+        FluentIcons.play_solid,
         color: Colors.white,
-        size: 28,
+        size: 22,
       ),
     );
   }

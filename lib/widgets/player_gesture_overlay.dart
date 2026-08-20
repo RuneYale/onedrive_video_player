@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 import 'package:media_kit/media_kit.dart';
 
 /// A transparent gesture layer placed on top of the [Video] widget.
@@ -264,8 +264,8 @@ class _SeekPreview extends StatelessWidget {
             children: [
               Icon(
                 isForward
-                    ? Icons.fast_forward_rounded
-                    : Icons.fast_rewind_rounded,
+                    ? FluentIcons.fast_forward
+                    : FluentIcons.rewind,
                 color: Colors.white,
                 size: 18,
               ),
@@ -304,8 +304,8 @@ class _GestureIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final icon = switch (kind) {
-      _GestureIndicatorKind.brightness => Icons.brightness_6_rounded,
-      _GestureIndicatorKind.volume => Icons.volume_up_rounded,
+      _GestureIndicatorKind.brightness => FluentIcons.brightness,
+      _GestureIndicatorKind.volume => FluentIcons.volume3,
     };
     return Container(
       width: 72,
@@ -322,10 +322,10 @@ class _GestureIndicator extends StatelessWidget {
           SizedBox(
             width: 40,
             height: 40,
-            child: CircularProgressIndicator(
-              value: value,
+            child: ProgressRing(
+              value: value * 100,
               strokeWidth: 3,
-              color: Colors.white,
+              activeColor: Colors.white,
               backgroundColor: Colors.white.withValues(alpha: 0.3),
             ),
           ),

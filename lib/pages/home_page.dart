@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/widgets/states.dart';
@@ -10,7 +10,7 @@ import '../pages/recent_page.dart';
 import '../pages/settings_page.dart';
 import '../providers/folder_provider.dart';
 
-/// Main app scaffold with a bottom navigation bar (Videos / Recent / Settings).
+/// Main app shell with a left navigation pane (Videos / Recent / Settings).
 ///
 /// The **Videos** tab shows the browser rooted at the user-selected OneDrive
 /// folder. When no folder has been selected yet, a prompt to pick one is shown
@@ -29,41 +29,38 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     final folder = ref.watch(folderProvider);
 
-    final pages = <Widget>[
-      // Videos tab
-      folder == null
-          ? const _FolderPrompt()
-          : const BrowserPage(),
-      // Recent tab
-      const RecentPage(),
-      // Settings tab
-      const SettingsPage(),
-    ];
-
-    return Scaffold(
-      body: IndexedStack(
-        index: _index,
-        children: pages,
+    return NavigationView(
+      pane: NavigationPane(
+        selected: _index,
+        onChanged: (i) => setState(() => _index = i),
+        displayMode: PaneDisplayMode.expanded,
+        items: [
+          PaneItem(
+            icon: const Icon(FluentIcons.video),
+            title: const Text('Videos'),
+            body: const SizedBox.shrink(),
+          ),
+          PaneItem(
+            icon: const Icon(FluentIcons.history),
+            title: const Text('Recent'),
+            body: const SizedBox.shrink(),
+          ),
+          PaneItem(
+            icon: const Icon(FluentIcons.settings),
+            title: const Text('Settings'),
+            body: const SizedBox.shrink(),
+          ),
+        ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.video_library_outlined),
-            selectedIcon: Icon(Icons.video_library_rounded),
-            label: 'Videos',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.history_outlined),
-            selectedIcon: Icon(Icons.history_rounded),
-            label: 'Recent',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings_rounded),
-            label: 'Settings',
-          ),
+      paneBodyBuilder: (item, body) => IndexedStack(
+        index: _index,
+        children: [
+          // Videos tab
+          folder == null ? const _FolderPrompt() : const BrowserPage(),
+          // Recent tab
+          const RecentPage(),
+          // Settings tab
+          const SettingsPage(),
         ],
       ),
     );
@@ -76,17 +73,17 @@ class _FolderPrompt extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Videos')),
-      body: EmptyState(
-        icon: Icons.video_library_outlined,
+    return ScaffoldPage(
+      header: const PageHeader(title: Text('Videos')),
+      content: EmptyState(
+        icon: FluentIcons.video,
         title: 'Select a video folder',
         message:
             'Choose a folder from your OneDrive to use as your video library.',
         actionLabel: 'Pick a folder',
         onAction: () {
           unawaited(Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const FolderPickerPage()),
+            FluentPageRoute<void>(builder: (_) => const FolderPickerPage()),
           ));
         },
       ),

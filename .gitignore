@@ -52,3 +52,7 @@ app.*.map.json
 .build.done
 *_done.flag
 *.log
+
+# Local backup of media_kit native binaries (ANGLE/libmpv), re-downloadable
+.deps-backup/
+*.done

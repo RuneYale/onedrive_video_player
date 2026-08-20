@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models/drive_item.dart';
@@ -39,11 +39,11 @@ class _RecentPageState extends ConsumerState<RecentPage> {
     // Only show entries that have a name (i.e. metadata was saved)
     final recent = entries.where((e) => e.value.name != null).toList();
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Recent')),
-      body: recent.isEmpty
-          ? EmptyState(
-              icon: Icons.history_rounded,
+    return ScaffoldPage(
+      header: const PageHeader(title: Text('Recent')),
+      content: recent.isEmpty
+          ? const EmptyState(
+              icon: FluentIcons.history,
               title: 'No recent plays',
               message: 'Videos you watch will appear here for quick access.',
             )
@@ -64,115 +64,114 @@ class _RecentList extends ConsumerWidget {
       itemBuilder: (context, index) {
         final entry = entries[index];
         final progress = entry.value;
+        final colors = context.colors;
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(vertical: 3),
           child: Card(
-            child: InkWell(
-              onTap: () => _openRecent(context, ref, entry),
+            padding: EdgeInsetsDirectional.zero,
+            child: HoverButton(
+              onPressed: () => _openRecent(context, ref, entry),
               onLongPress: () => _clearRecent(context, ref, entry.key),
-              borderRadius: BorderRadius.circular(14),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
-                child: Row(
-                  children: [
-                    // Thumbnail
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: SizedBox(
-                        width: 80,
-                        height: 46,
-                        child: progress.thumbnailUrl != null
-                            ? CachedNetworkImage(
-                                imageUrl: progress.thumbnailUrl!,
-                                fit: BoxFit.cover,
-                                placeholder: (_, _) => Container(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .surfaceContainerHigh,
-                                ),
-                                errorWidget: (_, _, _) => Container(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .surfaceContainerHigh,
+              builder: (context, states) {
+                final hovered = states.contains(WidgetState.hovered);
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 100),
+                  color: hovered
+                      ? colors.onSurface.withValues(alpha: 0.03)
+                      : Colors.transparent,
+                  padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
+                  child: Row(
+                    children: [
+                      // Thumbnail
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: SizedBox(
+                          width: 80,
+                          height: 46,
+                          child: progress.thumbnailUrl != null
+                              ? CachedNetworkImage(
+                                  imageUrl: progress.thumbnailUrl!,
+                                  fit: BoxFit.cover,
+                                  placeholder: (_, _) => Container(
+                                    color: colors.surfaceContainerHigh,
+                                  ),
+                                  errorWidget: (_, _, _) => Container(
+                                    color: colors.surfaceContainerHigh,
+                                    alignment: Alignment.center,
+                                    child: Icon(FluentIcons.video,
+                                        size: 20,
+                                        color: colors.onSurfaceVariant
+                                            .withValues(alpha: 0.4)),
+                                  ),
+                                )
+                              : Container(
+                                  color: colors.surfaceContainerHigh,
                                   alignment: Alignment.center,
-                                  child: Icon(Icons.movie_rounded,
+                                  child: Icon(FluentIcons.video,
                                       size: 20,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant
+                                      color: colors.onSurfaceVariant
                                           .withValues(alpha: 0.4)),
                                 ),
-                              )
-                            : Container(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerHigh,
-                                alignment: Alignment.center,
-                                child: Icon(Icons.movie_rounded,
-                                    size: 20,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant
-                                        .withValues(alpha: 0.4)),
-                              ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    // Title + progress
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(progress.name!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleSmall),
-                          const SizedBox(height: 4),
-                          if (progress.durationSeconds > 0) ...[
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(99),
-                              child: LinearProgressIndicator(
-                                value: progress.fraction,
-                                minHeight: 3,
-                              ),
-                            ),
+                      const SizedBox(width: 12),
+                      // Title + progress
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(progress.name!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: FluentTheme.of(context)
+                                    .typography
+                                    .bodyStrong),
                             const SizedBox(height: 4),
-                            Text(
-                              '${_fmt(Duration(
-                                milliseconds:
-                                    (progress.positionSeconds * 1000).round(),
-                              ))} / ${_fmt(Duration(
-                                milliseconds:
-                                    (progress.durationSeconds * 1000).round(),
-                              ))}',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                                fontFeatures: AppTheme.tabularFigures,
+                            if (progress.durationSeconds > 0) ...[
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(99),
+                                child: ProgressBar(
+                                  value:
+                                      (progress.fraction * 100).clamp(0, 100),
+                                  strokeWidth: 3,
+                                ),
                               ),
-                            ),
-                          ] else
-                            Text(
-                              _timeAgo(progress.updatedAt),
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
+                              const SizedBox(height: 4),
+                              Text(
+                                '${_fmt(Duration(
+                                  milliseconds:
+                                      (progress.positionSeconds * 1000)
+                                          .round(),
+                                ))} / ${_fmt(Duration(
+                                  milliseconds:
+                                      (progress.durationSeconds * 1000)
+                                          .round(),
+                                ))}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: colors.onSurfaceVariant,
+                                  fontFeatures: AppTheme.tabularFigures,
+                                ),
                               ),
-                            ),
-                        ],
+                            ] else
+                              Text(
+                                _timeAgo(progress.updatedAt),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(Icons.play_arrow_rounded,
-                        size: 22, color: Theme.of(context).colorScheme.primary),
-                  ],
-                ),
-              ),
+                      const SizedBox(width: 4),
+                      Icon(FluentIcons.play_solid,
+                          size: 16, color: colors.accent),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         );
@@ -195,7 +194,7 @@ class _RecentList extends ConsumerWidget {
       parentId: progress.parentId,
     );
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      FluentPageRoute<void>(
         builder: (_) => PlayerPage(
           video: item,
           siblings: const [],
@@ -214,13 +213,12 @@ class _RecentList extends ConsumerWidget {
   ) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        icon: const Icon(Icons.delete_outline_rounded),
+      builder: (ctx) => ContentDialog(
         title: const Text('Remove from recent?'),
         content: const Text(
             'This will also clear the resume position for this video.'),
         actions: [
-          TextButton(
+          Button(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),

@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 
 /// Plays a short fade + upward-slide entrance once when first built, after an
 /// optional [delay]. Used for staggered list entries so the UI doesn't mount

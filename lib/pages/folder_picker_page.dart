@@ -1,9 +1,10 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models/drive_item.dart';
+import '../core/theme/app_theme.dart';
 import '../core/widgets/states.dart';
 import '../providers/drive_provider.dart';
 import '../providers/folder_provider.dart';
@@ -77,18 +78,19 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
     unawaited(ref.read(driveProvider.notifier).setRoot(
           DriveFolder(folder.id, folder.name),
         ));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('"${folder.name}" set as your video folder'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    // InfoBar is shown from the page below after pop so it isn't clipped by
+    // the route transition.
     Navigator.of(context).pop();
+    unawaited(displayInfoBar(context, builder: (context, close) {
+      return InfoBar(
+        title: Text('"${folder.name}" set as your video folder'),
+        severity: InfoBarSeverity.success,
+      );
+    }, duration: const Duration(seconds: 2)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final canGoBack = _stack.length > 1;
 
     return PopScope(
@@ -97,35 +99,44 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _goBack();
       },
-      child: Scaffold(
-        appBar: AppBar(
+      child: ScaffoldPage(
+        header: PageHeader(
           leading: canGoBack
-              ? IconButton(
-                  icon: const Icon(Icons.arrow_back_rounded),
-                  onPressed: _goBack,
-                  tooltip: 'Up one folder',
+              ? Tooltip(
+                  message: 'Up one folder',
+                  child: IconButton(
+                    icon: const Icon(FluentIcons.back, size: 16),
+                    onPressed: _goBack,
+                  ),
                 )
               : null,
-        title: Text(_stack.last.name),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.check_circle_rounded),
-            tooltip: 'Use this folder',
-            onPressed: _confirm,
+          title: Text(_stack.last.name),
+          commandBar: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Tooltip(
+                message: 'Use this folder',
+                child: IconButton(
+                  icon: const Icon(FluentIcons.check_mark, size: 16),
+                  onPressed: _confirm,
+                ),
+              ),
+              Tooltip(
+                message: 'Cancel',
+                child: IconButton(
+                  icon: const Icon(FluentIcons.chrome_close, size: 14),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
+            ],
           ),
-          IconButton(
-            icon: const Icon(Icons.close_rounded),
-            tooltip: 'Cancel',
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-        ],
         ),
-        body: _buildBody(scheme),
+        content: _buildBody(),
       ),
     );
   }
 
-  Widget _buildBody(ColorScheme scheme) {
+  Widget _buildBody() {
     if (_loading) {
       return const LoadingState(label: 'Loading folders…');
     }
@@ -134,7 +145,7 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
     }
     if (_items.isEmpty) {
       return EmptyState(
-        icon: Icons.folder_off_rounded,
+        icon: FluentIcons.folder_open,
         title: 'No folders here',
         message: 'This folder has no sub-folders. Pick another one or use '
             'this folder as your video library.',
@@ -150,10 +161,21 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: SizedBox(
             width: double.infinity,
-            child: FilledButton.tonalIcon(
-              icon: const Icon(Icons.video_library_rounded),
-              label: Text("Use ' ${_stack.last.name}' as video folder"),
+            child: Button(
               onPressed: _confirm,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(FluentIcons.video, size: 16),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      "Use '${_stack.last.name}' as video folder",
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -163,37 +185,26 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
             itemCount: _items.length,
             itemBuilder: (context, index) {
               final item = _items[index];
+              final colors = context.colors;
               return Card(
-                child: InkWell(
-                  onTap: () => _openFolder(item),
-                  borderRadius: BorderRadius.circular(14),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: scheme.primary.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(11),
-                          ),
-                          alignment: Alignment.center,
-                          child: Icon(Icons.folder_rounded,
-                              size: 22, color: scheme.primary),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Text(item.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style:
-                                  Theme.of(context).textTheme.titleMedium),
-                        ),
-                        const Icon(Icons.chevron_right_rounded),
-                      ],
+                margin: const EdgeInsets.symmetric(vertical: 3),
+                padding: EdgeInsetsDirectional.zero,
+                child: ListTile(
+                  onPressed: () => _openFolder(item),
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: colors.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
                     ),
+                    alignment: Alignment.center,
+                    child: Icon(FluentIcons.folder_fill,
+                        size: 20, color: colors.accent),
                   ),
+                  title: Text(item.name,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: const Icon(FluentIcons.chevron_right, size: 12),
                 ),
               );
             },

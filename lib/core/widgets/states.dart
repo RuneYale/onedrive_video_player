@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
+
+import '../theme/app_theme.dart';
 
 /// A friendly, consistent "empty" placeholder used across list screens.
 class EmptyState extends StatelessWidget {
@@ -19,33 +21,34 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
+    final typography = FluentTheme.of(context).typography;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _IconBadge(icon: icon, color: scheme.primary),
+            _IconBadge(icon: icon, color: colors.accent),
             const SizedBox(height: 20),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleMedium,
+              style: typography.bodyStrong?.copyWith(fontSize: 16),
               textAlign: TextAlign.center,
             ),
             if (message != null) ...[
               const SizedBox(height: 8),
               Text(
                 message!,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+                style: typography.body?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
                 textAlign: TextAlign.center,
               ),
             ],
             if (actionLabel != null && onAction != null) ...[
               const SizedBox(height: 24),
-              FilledButton.tonal(onPressed: onAction, child: Text(actionLabel!)),
+              Button(onPressed: onAction, child: Text(actionLabel!)),
             ],
           ],
         ),
@@ -63,25 +66,26 @@ class ErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
+    final typography = FluentTheme.of(context).typography;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _IconBadge(icon: Icons.error_outline, color: scheme.error),
+            _IconBadge(icon: FluentIcons.error_badge, color: colors.error),
             const SizedBox(height: 20),
             Text(
               'Something went wrong',
-              style: Theme.of(context).textTheme.titleMedium,
+              style: typography.bodyStrong?.copyWith(fontSize: 16),
             ),
             const SizedBox(height: 8),
             Text(
               message,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+              style: typography.body?.copyWith(
+                color: colors.onSurfaceVariant,
+              ),
               textAlign: TextAlign.center,
             ),
             if (onRetry != null) ...[
@@ -110,14 +114,14 @@ class LoadingState extends StatelessWidget {
           const SizedBox(
             width: 28,
             height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
+            child: ProgressRing(strokeWidth: 2.5),
           ),
           if (label != null) ...[
             const SizedBox(height: 16),
             Text(
               label!,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+              style: FluentTheme.of(context).typography.body?.copyWith(
+                    color: context.colors.onSurfaceVariant,
                   ),
             ),
           ],

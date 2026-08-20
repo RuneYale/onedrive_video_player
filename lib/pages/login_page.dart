@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -18,8 +18,8 @@ class LoginPage extends ConsumerWidget {
     final auth = ref.watch(authProvider);
     final notifier = ref.read(authProvider.notifier);
 
-    return Scaffold(
-      body: SafeArea(
+    return ScaffoldPage(
+      content: SafeArea(
         child: Center(
           child: SingleChildScrollView(
             child: ConstrainedBox(
@@ -56,11 +56,12 @@ class _SignInView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
+    final typography = FluentTheme.of(context).typography;
     final features = <(IconData, String)>[
-      (Icons.cloud_done_outlined, 'Stream directly from OneDrive'),
-      (Icons.history_rounded, 'Resume where you left off'),
-      (Icons.subtitles_outlined, 'External subtitle support'),
+      (FluentIcons.cloud, 'Stream directly from OneDrive'),
+      (FluentIcons.history, 'Resume where you left off'),
+      (FluentIcons.closed_caption, 'External subtitle support'),
     ];
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -72,33 +73,33 @@ class _SignInView extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [scheme.primary, scheme.primary.withValues(alpha: 0.7)],
+              colors: [colors.accent, colors.accent.withValues(alpha: 0.7)],
             ),
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: scheme.primary.withValues(alpha: 0.25),
+                color: colors.accent.withValues(alpha: 0.25),
                 blurRadius: 24,
                 offset: const Offset(0, 12),
               ),
             ],
           ),
-          child: const Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 44),
+          child: const Icon(FluentIcons.play_solid, color: Colors.white, size: 44),
         ),
         const SizedBox(height: 24),
         Text(
           'OneDrive Video',
-          style: Theme.of(context).textTheme.displaySmall,
+          style: typography.titleLarge,
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 10),
         Text(
           'Stream the videos stored in your OneDrive — sign in to browse and play.',
           textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-                height: 1.5,
-              ),
+          style: typography.body?.copyWith(
+            color: colors.onSurfaceVariant,
+            height: 1.5,
+          ),
         ),
         const SizedBox(height: 28),
         for (final f in features)
@@ -106,10 +107,10 @@ class _SignInView extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Row(
               children: [
-                Icon(f.$1, size: 20, color: scheme.primary),
+                Icon(f.$1, size: 20, color: colors.accent),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(f.$2, style: Theme.of(context).textTheme.bodyMedium),
+                  child: Text(f.$2, style: typography.body),
                 ),
               ],
             ),
@@ -117,10 +118,16 @@ class _SignInView extends StatelessWidget {
         const SizedBox(height: 32),
         SizedBox(
           width: double.infinity,
-          child: FilledButton.icon(
-            icon: const Icon(Icons.login_rounded),
-            label: const Text('Sign in with Microsoft'),
+          child: FilledButton(
             onPressed: onSignIn,
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(FluentIcons.signin, size: 18),
+                SizedBox(width: 8),
+                Text('Sign in with Microsoft'),
+              ],
+            ),
           ),
         ),
       ],
@@ -179,55 +186,43 @@ class _DeviceCodeViewState extends State<_DeviceCodeView> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
+    final typography = FluentTheme.of(context).typography;
     final dc = widget.deviceCode;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Text('Sign in to Microsoft',
-            style: Theme.of(context).textTheme.headlineSmall),
+        Text('Sign in to Microsoft', style: typography.subtitle),
         const SizedBox(height: 8),
         Text(
           'Enter this code on any device to securely sign in.',
           textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
+          style: typography.body?.copyWith(
+            color: colors.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: 24),
         _Step(
           index: 1,
           text: 'Open',
-          trailing: InkWell(
-            onTap: () => launchUrl(Uri.parse(dc.verificationUri)),
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    dc.verificationUri,
-                    style: TextStyle(
-                      color: scheme.primary,
-                      fontWeight: FontWeight.w600,
-                      decoration: TextDecoration.underline,
-                      decorationColor: scheme.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Icon(Icons.open_in_new, size: 16, color: scheme.primary),
-                ],
-              ),
+          trailing: HyperlinkButton(
+            onPressed: () => launchUrl(Uri.parse(dc.verificationUri)),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(dc.verificationUri),
+                const SizedBox(width: 6),
+                const Icon(FluentIcons.open_in_new_window, size: 14),
+              ],
             ),
           ),
         ),
         const SizedBox(height: 16),
-        _Step(
+        const _Step(
           index: 2,
           text: 'Enter this code',
-          trailing: const SizedBox.shrink(),
+          trailing: SizedBox.shrink(),
         ),
         const SizedBox(height: 10),
         _CodeBox(code: dc.userCode, copied: _copied, onCopy: _copy),
@@ -235,12 +230,12 @@ class _DeviceCodeViewState extends State<_DeviceCodeView> {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.timer_outlined, size: 15, color: scheme.onSurfaceVariant),
+            Icon(FluentIcons.timer, size: 15, color: colors.onSurfaceVariant),
             const SizedBox(width: 6),
             Text(
               'Code expires in $_remainingLabel',
               style: TextStyle(
-                color: scheme.onSurfaceVariant,
+                color: colors.onSurfaceVariant,
                 fontFeatures: AppTheme.tabularFigures,
               ),
             ),
@@ -249,7 +244,7 @@ class _DeviceCodeViewState extends State<_DeviceCodeView> {
         const SizedBox(height: 24),
         const _WaitingRow(),
         const SizedBox(height: 20),
-        TextButton(onPressed: widget.onCancel, child: const Text('Cancel')),
+        HyperlinkButton(onPressed: widget.onCancel, child: const Text('Cancel')),
       ],
     );
   }
@@ -263,7 +258,7 @@ class _Step extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -271,18 +266,18 @@ class _Step extends StatelessWidget {
           width: 26,
           height: 26,
           decoration: BoxDecoration(
-            color: scheme.primary.withValues(alpha: 0.14),
+            color: colors.accent.withValues(alpha: 0.14),
             shape: BoxShape.circle,
           ),
           alignment: Alignment.center,
           child: Text(
             '$index',
             style: TextStyle(
-                color: scheme.primary, fontWeight: FontWeight.w700, fontSize: 13),
+                color: colors.accent, fontWeight: FontWeight.w700, fontSize: 13),
           ),
         ),
         const SizedBox(width: 12),
-        Text(text, style: Theme.of(context).textTheme.titleMedium),
+        Text(text, style: FluentTheme.of(context).typography.bodyStrong),
         const SizedBox(width: 10),
         Expanded(child: Align(alignment: Alignment.centerLeft, child: trailing)),
       ],
@@ -298,13 +293,13 @@ class _CodeBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outline),
+        color: colors.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colors.outline),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -319,12 +314,14 @@ class _CodeBox extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 14),
-          IconButton(
-            tooltip: copied ? 'Copied' : 'Copy',
-            onPressed: onCopy,
-            icon: Icon(
-              copied ? Icons.check_rounded : Icons.copy_rounded,
-              color: copied ? scheme.primary : scheme.onSurfaceVariant,
+          Tooltip(
+            message: copied ? 'Copied' : 'Copy',
+            child: IconButton(
+              onPressed: onCopy,
+              icon: Icon(
+                copied ? FluentIcons.check_mark : FluentIcons.copy,
+                color: copied ? colors.accent : colors.onSurfaceVariant,
+              ),
             ),
           ),
         ],
@@ -337,18 +334,18 @@ class _WaitingRow extends StatelessWidget {
   const _WaitingRow();
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2, color: scheme.primary),
+          child: ProgressRing(strokeWidth: 2, activeColor: colors.accent),
         ),
         const SizedBox(width: 12),
         Text('Waiting for you to sign in…',
-            style: TextStyle(color: scheme.onSurfaceVariant)),
+            style: TextStyle(color: colors.onSurfaceVariant)),
       ],
     );
   }

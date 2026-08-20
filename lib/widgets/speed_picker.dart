@@ -1,17 +1,16 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 
-/// A bottom sheet that lets the user pick a playback speed.
+/// A dialog that lets the user pick a playback speed.
 /// The current speed is highlighted; selecting a speed calls [onSelected].
 void showSpeedPicker(
   BuildContext context, {
   required double currentSpeed,
   required ValueChanged<double> onSelected,
 }) {
-  unawaited(showModalBottomSheet<void>(
+  unawaited(showDialog<void>(
     context: context,
-    isScrollControlled: true,
     builder: (ctx) => _SpeedPicker(
       currentSpeed: currentSpeed,
       onSelected: (speed) {
@@ -37,41 +36,28 @@ class _SpeedPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return SafeArea(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.5,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    final theme = FluentTheme.of(context);
+    return ContentDialog(
+      constraints: const BoxConstraints(maxWidth: 320, maxHeight: 480),
+      title: Row(
+        children: [
+          Icon(FluentIcons.speed_high,
+              size: 20, color: theme.accentColor.normal),
+          const SizedBox(width: 10),
+          const Text('Playback speed'),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView(
+          shrinkWrap: true,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
-              child: Row(
-                children: [
-                  Icon(Icons.speed_rounded, size: 22, color: scheme.primary),
-                  const SizedBox(width: 10),
-                  Text('Playback speed',
-                      style: Theme.of(context).textTheme.titleLarge),
-                ],
+            for (final speed in speeds)
+              _SpeedTile(
+                speed: speed,
+                isSelected: speed == currentSpeed,
+                onSelected: () => onSelected(speed),
               ),
-            ),
-            Divider(height: 1, color: scheme.outlineVariant),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                children: [
-                  for (final speed in speeds)
-                    _SpeedTile(
-                      speed: speed,
-                      isSelected: speed == currentSpeed,
-                      onSelected: () => onSelected(speed),
-                    ),
-                ],
-              ),
-            ),
           ],
         ),
       ),
@@ -92,40 +78,53 @@ class _SpeedTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = FluentTheme.of(context);
+    final accent = theme.accentColor.normal;
     final label = speed == 1.0 ? 'Normal' : '${speed}x';
 
-    return InkWell(
-      onTap: onSelected,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-        child: Row(
-          children: [
-            Icon(
-              speed == 1.0
-                  ? Icons.play_arrow_rounded
-                  : speed > 1.0
-                      ? Icons.fast_forward_rounded
-                      : Icons.fast_rewind_rounded,
-              size: 18,
-              color: isSelected ? scheme.primary : scheme.onSurfaceVariant,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                label,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight:
-                          isSelected ? FontWeight.w700 : FontWeight.w500,
-                      color: isSelected ? scheme.primary : null,
-                    ),
+    return HoverButton(
+      onPressed: onSelected,
+      builder: (context, states) {
+        final hovered = states.contains(WidgetState.hovered);
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? accent.withValues(alpha: 0.12)
+                : hovered
+                    ? theme.resources.controlFillColorSecondary
+                    : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Icon(
+                speed == 1.0
+                    ? FluentIcons.play
+                    : speed > 1.0
+                        ? FluentIcons.fast_forward
+                        : FluentIcons.rewind,
+                size: 14,
+                color: isSelected ? accent : null,
               ),
-            ),
-            if (isSelected)
-              Icon(Icons.check_rounded, color: scheme.primary, size: 22),
-          ],
-        ),
-      ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  label,
+                  style: theme.typography.body?.copyWith(
+                    fontWeight:
+                        isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: isSelected ? accent : null,
+                  ),
+                ),
+              ),
+              if (isSelected)
+                Icon(FluentIcons.check_mark, color: accent, size: 14),
+            ],
+          ),
+        );
+      },
     );
   }
 }

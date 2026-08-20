@@ -1,19 +1,18 @@
 import 'dart:async';
-import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../core/models/drive_item.dart';
+import '../core/models/subtitle_style.dart';
 import '../core/services/playback_progress_service.dart';
 import '../core/services/subtitle_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/states.dart';
 import '../providers/drive_provider.dart';
-import '../providers/playback_provider.dart';
 import '../providers/subtitle_style_provider.dart';
 import '../widgets/player_gesture_overlay.dart';
 import '../widgets/speed_picker.dart';
@@ -21,7 +20,7 @@ import '../widgets/subtitle_controls.dart';
 import '../widgets/subtitle_style_editor.dart';
 
 class PlayerPage extends ConsumerStatefulWidget {
-  const PlayerPage({super.key, required this.video, this.siblings = const []});
+  const PlayerPage({required this.video, required this.siblings, super.key});
 
   final DriveItem video;
   final List<DriveItem> siblings;
@@ -31,22 +30,39 @@ class PlayerPage extends ConsumerStatefulWidget {
 }
 
 class _PlayerPageState extends ConsumerState<PlayerPage> {
-  late final Player _player;
-  late final VideoController _controller;
-  late final PlaybackProgressService _progress;
-  static const _matcher = SubtitleMatcher();
+  static const _progressInterval = Duration(seconds: 5);
+
+  final PlaybackProgressService _progress = PlaybackProgressService();
+  final SubtitleMatcher _matcher = const SubtitleMatcher();
+
+  late final Player _player = Player(
+    configuration: const PlayerConfiguration(title: 'OneDrive Video Player'),
+  );
+  late final VideoController _controller = VideoController(_player);
+
+  BrightnessHelper? _brightnessHelper;
+  VolumeHelper? _volumeHelper;
+
+  PlaybackProgress? _savedProgress;
+  List<DriveItem> _externalSubs = [];
 
   bool _loading = true;
   String? _error;
+  String? _selectedSubtitleId;
+  String? _loadingSubtitleId;
+  bool _locked = false;
+  bool _subtitlePanelOpen = false;
+  bool _audioPanelOpen = false;
+  double _speed = 1.0;
 
-  PlaybackProgress? _savedProgress;
+  Tracks _tracks = const Tracks();
+  Track _currentTrack = const Track();
+
+  Duration _lastSaved = Duration.zero;
   bool _wantsResume = false;
   bool _resumeSeekDone = false;
-  bool _resumeInProgress = false;
   bool _completed = false;
   bool _disposed = false;
-
-  bool _locked = false;
 
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration>? _durationSub;
@@ -54,48 +70,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   StreamSubscription<Tracks>? _tracksSub;
   StreamSubscription<Track>? _trackSub;
   StreamSubscription<String>? _errorSub;
-  DateTime? _lastSave;
-
-  List<DriveItem> _externalSubs = const [];
-  Tracks _tracks = const Tracks();
-
-  /// Id of the selected subtitle choice (see [_choices]). Stored as an id,
-  /// not an index, because the choice list changes when tracks arrive
-  /// asynchronously; defaults to `'auto'`, the player's own default.
-  String _selectedSubtitleId = 'auto';
-  String? _loadingSubtitleId;
-
-  /// Whether the floating subtitle selection panel is open over the video.
-  bool _subtitlePanelOpen = false;
-
-  /// Whether the floating audio track selection panel is open over the video.
-  bool _audioPanelOpen = false;
-
-  /// Currently selected video/audio/subtitle track, kept in sync with
-  /// [_player.stream.track] so the audio picker can highlight the active track.
-  Track _currentTrack = const Track();
-
-  double _speed = 1.0;
-
-  _PlatformBrightnessHelper? _brightnessHelper;
-  _PlatformVolumeHelper? _volumeHelper;
 
   @override
   void initState() {
     super.initState();
-    _player = Player(
-      configuration: const PlayerConfiguration(
-        libass: true,
-      ),
-    );
-    _controller = VideoController(_player);
-    _progress = ref.read(playbackProgressServiceProvider);
-    // Only Android has the brightness/volume MethodChannel implementations.
-    if (Platform.isAndroid) {
-      _brightnessHelper = _PlatformBrightnessHelper();
-      _volumeHelper = _PlatformVolumeHelper();
-    }
-    unawaited(_open());
+    // Brightness/volume helpers use platform channels that don't exist on
+    // Windows (the underlying plugins are Android/iOS only), and the desktop
+    // implementations aren't wired up in this codebase. The gesture overlay
+    // null-checks the helpers, so leaving them null simply disables those
+    // drag gestures on desktop.
+    _open();
   }
 
   Future<void> _open() async {
@@ -194,76 +178,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     unawaited(_open());
   }
 
-  void _onDuration(Duration duration) {
-    if (!mounted) return;
-    if (_wantsResume &&
-        !_resumeSeekDone &&
-        duration > Duration.zero &&
-        _savedProgress != null) {
-      unawaited(_seekToSavedAndPlay());
-    }
-  }
-
-  /// Seeks to the saved resume position and starts playback, then confirms
-  /// the seek actually landed: seeks issued before the demuxer is ready are
-  /// silently dropped, so the position is polled and the seek retried a few
-  /// times. While a resume is unconfirmed, [_onPosition] suspends periodic
-  /// progress saving so a still-zero position cannot overwrite the resume
-  /// point.
-  Future<void> _seekToSavedAndPlay() async {
-    if (_savedProgress == null || _resumeSeekDone || _resumeInProgress) return;
-    _resumeInProgress = true;
-    final target = Duration(
-      milliseconds: (_savedProgress!.positionSeconds * 1000).round(),
-    );
-    try {
-      for (var attempt = 0; attempt < 5; attempt++) {
-        await _player.seek(target);
-        unawaited(_player.play());
-        final deadline = DateTime.now().add(const Duration(seconds: 3));
-        while (DateTime.now().isBefore(deadline)) {
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-          if (_disposed || !mounted) return;
-          if ((_player.state.position - target).abs() <
-              const Duration(seconds: 2)) {
-            _resumeSeekDone = true;
-            _showResumeSnackBar(target);
-            return;
-          }
-        }
-      }
-      // Give up gracefully: keep playing from wherever playback started.
-      _resumeSeekDone = true;
-    } catch (_) {
-      // Player disposed mid-resume or seek failed — nothing more to do.
-      _resumeSeekDone = true;
-    } finally {
-      _resumeInProgress = false;
-    }
-  }
-
   void _onPosition(Duration position) {
-    if (!mounted) return;
-    // A position update after completion means the user sought back or
-    // replayed: resume progress tracking.
-    if (_completed) {
-      final d = _player.state.duration;
-      if (d <= Duration.zero || position >= d * 0.95) return;
-      _completed = false;
-    }
-    // While a resume seek is unconfirmed, do not let a still-zero position
-    // overwrite the saved resume point.
-    if (_wantsResume && !_resumeSeekDone) return;
-    final now = DateTime.now();
-    if (_lastSave == null ||
-        now.difference(_lastSave!) >= const Duration(seconds: 5)) {
-      _lastSave = now;
-      final duration = _player.state.duration;
-      if (position > Duration.zero) {
+    // Periodic auto-save so a crash doesn't lose much progress.
+    if ((position - _lastSaved).abs() > _progressInterval) {
+      _lastSaved = position;
+      if (position > const Duration(seconds: 3) && !_completed) {
         unawaited(_progress.save(
           widget.video.id,
           position,
-          duration,
+          _player.state.duration,
           name: widget.video.name,
           thumbnailUrl: widget.video.thumbnailUrl,
           size: widget.video.size,
@@ -273,20 +196,59 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
   }
 
+  void _onDuration(Duration duration) {
+    if (_wantsResume && !_resumeSeekDone && duration > Duration.zero) {
+      unawaited(_seekToSavedAndPlay());
+    }
+  }
+
+  /// Seeks to the saved position once, waits for the stream to report the
+  /// seek landed, then starts playback. Verifying via the position stream
+  /// (instead of fire-and-forget + snackbar) means a failed seek doesn't get
+  /// masked by a "Resumed" toast.
+  Future<void> _seekToSavedAndPlay() async {
+    if (_resumeSeekDone) return;
+    _resumeSeekDone = true;
+
+    final saved = _savedProgress;
+    if (saved == null) {
+      await _player.play();
+      return;
+    }
+    final target = Duration(seconds: saved.positionSeconds.round());
+
+    await _player.seek(target);
+
+    // Wait for the position stream to confirm the seek landed.
+    const tolerance = Duration(seconds: 2);
+    const timeout = Duration(seconds: 5);
+    try {
+      await _player.stream.position.firstWhere(
+        (p) => (p - target).abs() <= tolerance,
+      ).timeout(timeout);
+    } catch (_) {
+      // Timeout or stream error — continue anyway.
+    }
+
+    if (_disposed || !mounted) return;
+    await _player.play();
+    _showResumeInfoBar(target);
+  }
+
   void _onCompleted(bool completed) {
     if (!completed) return;
     _completed = true;
     unawaited(_progress.clear(widget.video.id));
   }
 
-  void _showResumeSnackBar(Duration position) {
+  void _showResumeInfoBar(Duration position) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Resumed from ${_formatDuration(position)}'),
-        duration: const Duration(seconds: 3),
-      ),
-    );
+    unawaited(displayInfoBar(context, builder: (context, close) {
+      return InfoBar(
+        title: Text('Resumed from ${_formatDuration(position)}'),
+        severity: InfoBarSeverity.info,
+      );
+    }, duration: const Duration(seconds: 3)));
   }
 
   // --- Subtitles ----------------------------------------------------------
@@ -331,9 +293,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadingSubtitleId = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not load subtitle: $e')),
-      );
+      unawaited(displayInfoBar(context, builder: (context, close) {
+        return InfoBar(
+          title: Text('Could not load subtitle: $e'),
+          severity: InfoBarSeverity.error,
+        );
+      }));
     }
   }
 
@@ -367,7 +332,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     unawaited(_tracksSub?.cancel());
     unawaited(_trackSub?.cancel());
     unawaited(_errorSub?.cancel());
-    unawaited(_brightnessHelper?.reset());
     unawaited(_player.dispose());
 
     if (shouldSave) {
@@ -475,9 +439,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         // the player.
         if (!didPop) _closeAllPanels();
       },
-      child: Scaffold(
-        backgroundColor: AppTheme.playerSurface,
-        body: Focus(
+      child: ColoredBox(
+        color: AppTheme.playerSurface,
+        child: ScaffoldPage(
+        padding: EdgeInsets.zero,
+        content: Focus(
           autofocus: true,
           onKeyEvent: (node, event) {
             if (event is KeyDownEvent &&
@@ -543,7 +509,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 Positioned.fill(
                   child: Stack(
                     children: [
-                      // Scrim — tap outside the panel to close it.
                       Positioned.fill(
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
@@ -568,6 +533,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 ),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -614,30 +580,46 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     try {
       await _player.setAudioTrack(track);
       // _trackSub updates _currentTrack and rebuilds the panel, so the
-      // checkmark moves automatically — no manual setState needed.
+      // checkmark moves automatically �� no manual setState needed.
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not switch audio track: $e')),
-      );
+      unawaited(displayInfoBar(context, builder: (context, close) {
+        return InfoBar(
+          title: Text('Could not switch audio track: $e'),
+          severity: InfoBarSeverity.error,
+        );
+      }));
     }
   }
 
-  /// Opens the subtitle appearance editor as a centered dialog (弹窗) rather
-  /// than a bottom sheet, keeping it consistent with the floating picker.
+  /// Opens the subtitle appearance editor as a Fluent ContentDialog.
   void _showAppearanceEditor(BuildContext context) {
     unawaited(showDialog<void>(
       context: context,
-      builder: (ctx) => Dialog(
-        insetPadding: const EdgeInsets.all(16),
-        child: SubtitleStyleEditor(onClose: () => Navigator.of(ctx).pop()),
+      builder: (ctx) => ContentDialog(
+        constraints: const BoxConstraints(maxWidth: 520),
+        title: Row(
+          children: [
+            Icon(FluentIcons.font,
+                size: 20, color: FluentTheme.of(ctx).accentColor.normal),
+            const SizedBox(width: 10),
+            const Expanded(child: Text('Subtitle appearance')),
+            IconButton(
+              icon: const Icon(FluentIcons.chrome_close, size: 12),
+              onPressed: () => Navigator.of(ctx).pop(),
+            ),
+          ],
+        ),
+        content: const SubtitleStyleEditor(),
+        actions: subtitleStyleEditorActions(context, ref,
+            onClose: () => Navigator.of(ctx).pop()),
       ),
     ));
   }
 }
 
 // ---------------------------------------------------------------------------
-// Lock screen overlay
+// Top bar
 // ---------------------------------------------------------------------------
 
 class _TopBar extends StatelessWidget {
@@ -663,9 +645,8 @@ class _TopBar extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+            icon: const Icon(FluentIcons.chrome_close, size: 14),
             onPressed: onClose,
-            tooltip: 'Close player',
           ),
           const SizedBox(width: 4),
           Expanded(
@@ -673,44 +654,19 @@ class _TopBar extends StatelessWidget {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
-                fontSize: 16,
+                fontSize: 14,
                 fontWeight: FontWeight.w600,
+                shadows: [
+                  Shadow(
+                      blurRadius: 8,
+                      color: Colors.black.withValues(alpha: 0.54))
+                ],
               ),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _LockScreen extends StatelessWidget {
-  const _LockScreen({required this.onUnlock});
-  final VoidCallback onUnlock;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black.withValues(alpha: 0.3),
-      child: InkWell(
-        onTap: onUnlock,
-        child: Center(
-          child: Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.6),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.lock_rounded,
-              color: Colors.white,
-              size: 26,
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -731,6 +687,9 @@ class _SpeedBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.15),
+        ),
       ),
       child: Text(
         '${speed}x',
@@ -745,48 +704,85 @@ class _SpeedBadge extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Subtitle choices & picker
+// Lock screen overlay
 // ---------------------------------------------------------------------------
 
-sealed class _SubtitleChoice {
-  const _SubtitleChoice(this.id, this.label, this.kind);
-  final String id;
-  final String label;
-  final _SubtitleKind kind;
+class _LockScreen extends StatefulWidget {
+  const _LockScreen({required this.onUnlock});
+  final VoidCallback onUnlock;
+
+  @override
+  State<_LockScreen> createState() => _LockScreenState();
 }
 
-class _OffChoice extends _SubtitleChoice {
-  const _OffChoice() : super('off', 'Off', _SubtitleKind.off);
+class _LockScreenState extends State<_LockScreen> {
+  bool _showUnlock = true;
+  Timer? _hideTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startHideTimer();
+  }
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _showUnlock = false);
+    });
+  }
+
+  void _onTap() {
+    setState(() => _showUnlock = true);
+    _startHideTimer();
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _onTap,
+      child: Container(
+        color: Colors.transparent,
+        child: Center(
+          child: AnimatedOpacity(
+            opacity: _showUnlock ? 1 : 0,
+            duration: const Duration(milliseconds: 300),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(FluentIcons.lock,
+                    size: 48, color: Colors.white.withValues(alpha: 0.5)),
+                const SizedBox(height: 12),
+                Button(
+                  onPressed: widget.onUnlock,
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(FluentIcons.unlock, size: 14),
+                      SizedBox(width: 8),
+                      Text('Unlock'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-class _AutoChoice extends _SubtitleChoice {
-  const _AutoChoice() : super('auto', 'Auto', _SubtitleKind.auto);
-}
+// ---------------------------------------------------------------------------
+// Subtitle panel
+// ---------------------------------------------------------------------------
 
-class _EmbeddedChoice extends _SubtitleChoice {
-  _EmbeddedChoice({required this.track})
-      : super(
-          'embedded:${track.id}',
-          track.title ?? track.language ?? 'Embedded track ${track.id}',
-          _SubtitleKind.embedded,
-        );
-  final SubtitleTrack track;
-}
-
-class _ExternalChoice extends _SubtitleChoice {
-  _ExternalChoice({required this.item})
-      : super('external:${item.id}', item.name, _SubtitleKind.external);
-  final DriveItem item;
-}
-
-enum _SubtitleKind { off, auto, embedded, external }
-
-const _subtitleLang = SubtitleLanguageResolver();
-
-/// A floating panel that overlays the video for subtitle selection (VLC/MPV
-/// style), grouped into Off/Auto, Embedded and External sections. Stays open
-/// after a selection so the user can see the checkmark move and try another
-/// track; dismissed via the scrim or the close button.
 class _SubtitlePanel extends StatelessWidget {
   const _SubtitlePanel({
     required this.video,
@@ -808,134 +804,61 @@ class _SubtitlePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = Theme.of(context).colorScheme.primary;
-    const bg = Color(0xF216181F);
-    const divider = Color(0x1FFFFFFF);
-
-    final off = choices.whereType<_OffChoice>().toList();
-    final auto = choices.whereType<_AutoChoice>().toList();
-    final embedded = choices.whereType<_EmbeddedChoice>().toList();
-    final external = choices.whereType<_ExternalChoice>().toList();
-
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      elevation: 12,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 340,
-          maxHeight: MediaQuery.of(context).size.height * 0.72,
-        ),
+    final colors = context.colors;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320, maxHeight: 400),
+      child: Acrylic(
+        elevation: 4,
+        shadowColor: Colors.black,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Header
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 6, 10),
+              padding: const EdgeInsets.fromLTRB(16, 12, 4, 8),
               child: Row(
                 children: [
-                  Icon(Icons.subtitles_rounded, size: 20, color: accent),
-                  const SizedBox(width: 10),
-                  const Text('Subtitles',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      )),
-                  const Spacer(),
+                  Icon(FluentIcons.closed_caption,
+                      size: 16, color: colors.accent),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('Subtitles',
+                        style: FluentTheme.of(context)
+                            .typography
+                            .bodyStrong),
+                  ),
+                  Tooltip(
+                    message: 'Customize appearance',
+                    child: IconButton(
+                      icon: const Icon(FluentIcons.font, size: 14),
+                      onPressed: onCustomize,
+                    ),
+                  ),
                   IconButton(
-                    icon: const Icon(Icons.close_rounded,
-                        size: 20, color: Colors.white70),
+                    icon: const Icon(FluentIcons.chrome_close, size: 12),
                     onPressed: onClose,
-                    tooltip: 'Close',
-                    visualDensity: VisualDensity.compact,
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1, color: divider),
+            const Divider(),
+            // Choices
             Flexible(
-              child: ListView(
+              child: ListView.builder(
                 shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                children: [
-                  for (final c in [...off, ...auto])
-                    _SubtitleRow(
-                      choice: c,
-                      isSelected: selected?.id == c.id,
-                      isLoading: loadingId == c.id,
-                      accent: accent,
-                      onSelected: onSelected,
-                    ),
-                  if (embedded.isNotEmpty) ...[
-                    const _SectionLabel('Embedded'),
-                    for (final c in embedded)
-                      _SubtitleRow(
-                        choice: c,
-                        isSelected: selected?.id == c.id,
-                        isLoading: loadingId == c.id,
-                        accent: accent,
-                        onSelected: onSelected,
-                      ),
-                  ],
-                  if (external.isNotEmpty) ...[
-                    const _SectionLabel('External'),
-                    for (final c in external)
-                      _SubtitleRow(
-                        choice: c,
-                        video: video,
-                        isSelected: selected?.id == c.id,
-                        isLoading: loadingId == c.id,
-                        accent: accent,
-                        onSelected: onSelected,
-                      ),
-                  ],
-                  if (embedded.isEmpty && external.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 12, 16, 16),
-                      child: Text(
-                        'No embedded or external subtitles found.\n'
-                        'Add an .srt / .vtt / .ass file with a matching name '
-                        '(e.g. Movie.en.srt) to see it here.',
-                        style: TextStyle(
-                            color: Colors.white70, height: 1.5, fontSize: 13),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: divider),
-            InkWell(
-              onTap: onCustomize,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
-                  children: [
-                    const Icon(Icons.format_size_rounded,
-                        size: 20, color: Colors.white70),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('Customize appearance',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600)),
-                          SizedBox(height: 1),
-                          Text('Size, color, background, outline',
-                              style: TextStyle(
-                                  color: Colors.white70, fontSize: 12)),
-                        ],
-                      ),
-                    ),
-                    const Icon(Icons.chevron_right_rounded,
-                        size: 22, color: Colors.white70),
-                  ],
-                ),
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: choices.length,
+                itemBuilder: (context, index) {
+                  final c = choices[index];
+                  final isSelected = c.id == selected?.id;
+                  final isLoading = c.id == loadingId;
+                  return _ChoiceTile(
+                    choice: c,
+                    selected: isSelected,
+                    loading: isLoading,
+                    onTap: () => onSelected(c),
+                  );
+                },
               ),
             ),
           ],
@@ -945,152 +868,73 @@ class _SubtitlePanel extends StatelessWidget {
   }
 }
 
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 10, 18, 4),
-      child: Text(text,
-          style: const TextStyle(
-            color: Colors.white54,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.8,
-          )),
-    );
-  }
-}
-
-class _SubtitleRow extends StatelessWidget {
-  const _SubtitleRow({
+class _ChoiceTile extends StatelessWidget {
+  const _ChoiceTile({
     required this.choice,
-    required this.isSelected,
-    required this.isLoading,
-    required this.accent,
-    required this.onSelected,
-    this.video,
+    required this.selected,
+    required this.loading,
+    required this.onTap,
   });
 
   final _SubtitleChoice choice;
-  final bool isSelected;
-  final bool isLoading;
-  final Color accent;
-  final ValueChanged<_SubtitleChoice> onSelected;
-
-  /// The playing video; only needed for external subtitles to resolve a
-  /// language label from the file name.
-  final DriveItem? video;
+  final bool selected;
+  final bool loading;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final icon = switch (choice.kind) {
-      _SubtitleKind.off => Icons.subtitles_off_rounded,
-      _SubtitleKind.auto => Icons.auto_awesome_rounded,
-      _SubtitleKind.embedded => Icons.movie_filter_outlined,
-      _SubtitleKind.external => Icons.closed_caption_rounded,
-    };
-
-    String title = choice.label;
-    String? subtitle;
-    String? formatChip;
-
-    if (choice case _ExternalChoice(:final item)) {
-      if (video != null) {
-        final lang = _subtitleLang.labelOf(video!, item);
-        title = lang ?? item.name;
-        subtitle = lang != null ? item.name : null;
-      } else {
-        title = item.name;
-      }
-      final ext = item.extension;
-      if (ext.isNotEmpty) formatChip = ext.substring(1).toUpperCase();
-    } else if (choice case _EmbeddedChoice()) {
-      subtitle = 'Embedded track';
-    }
-
-    return InkWell(
-      onTap: isLoading ? null : () => onSelected(choice),
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color:
-              isSelected ? accent.withValues(alpha: 0.16) : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: isSelected ? accent : Colors.white70),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight:
-                            isSelected ? FontWeight.w700 : FontWeight.w500,
-                      )),
-                  if (subtitle != null) ...[
-                    const SizedBox(height: 1),
-                    Text(subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Colors.white54, fontSize: 12)),
-                  ],
-                ],
-              ),
-            ),
-            if (formatChip != null) ...[
-              const SizedBox(width: 8),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(5),
+    final colors = context.colors;
+    return HoverButton(
+      onPressed: onTap,
+      builder: (context, states) {
+        final hovered = states.contains(WidgetState.hovered);
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          color: selected
+              ? colors.accent.withValues(alpha: 0.08)
+              : hovered
+                  ? colors.onSurface.withValues(alpha: 0.04)
+                  : Colors.transparent,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Icon(choice.icon,
+                  size: 14,
+                  color: selected ? colors.accent : colors.onSurfaceVariant),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  choice.label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight:
+                        selected ? FontWeight.w600 : FontWeight.normal,
+                    color: selected ? colors.accent : colors.onSurface,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                child: Text(formatChip,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.5,
-                    )),
               ),
+              if (loading)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: ProgressRing(strokeWidth: 2),
+                )
+              else if (selected)
+                Icon(FluentIcons.check_mark, size: 12, color: colors.accent),
             ],
-            const SizedBox(width: 8),
-            if (isLoading)
-              SizedBox(
-                width: 18,
-                height: 18,
-                child:
-                    CircularProgressIndicator(strokeWidth: 2, color: accent),
-              )
-            else if (isSelected)
-              Icon(Icons.check_rounded, color: accent, size: 20),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Audio track selection panel
+// Audio panel
 // ---------------------------------------------------------------------------
 
-/// Floating panel for audio track selection — mirrors [_SubtitlePanel].
 class _AudioPanel extends StatelessWidget {
   const _AudioPanel({
     required this.tracks,
@@ -1106,180 +950,94 @@ class _AudioPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = Theme.of(context).colorScheme.primary;
-    const bg = Color(0xF216181F);
-    const divider = Color(0x1FFFFFFF);
-
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      elevation: 12,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 340,
-          maxHeight: MediaQuery.of(context).size.height * 0.72,
-        ),
+    final colors = context.colors;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320, maxHeight: 400),
+      child: Acrylic(
+        elevation: 4,
+        shadowColor: Colors.black,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 6, 10),
+              padding: const EdgeInsets.fromLTRB(16, 12, 4, 8),
               child: Row(
                 children: [
-                  Icon(Icons.audiotrack_rounded, size: 20, color: accent),
-                  const SizedBox(width: 10),
-                  const Text('Audio',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      )),
-                  const Spacer(),
+                  Icon(FluentIcons.headset,
+                      size: 16, color: colors.accent),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('Audio track',
+                        style: FluentTheme.of(context)
+                            .typography
+                            .bodyStrong),
+                  ),
                   IconButton(
-                    icon: const Icon(Icons.close_rounded,
-                        size: 20, color: Colors.white70),
+                    icon: const Icon(FluentIcons.chrome_close, size: 12),
                     onPressed: onClose,
-                    tooltip: 'Close',
-                    visualDensity: VisualDensity.compact,
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1, color: divider),
+            const Divider(),
             Flexible(
-              child: ListView(
+              child: ListView.builder(
                 shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                children: [
-                  _AudioRow(
-                    track: AudioTrack.auto(),
-                    title: 'Auto',
-                    subtitle: 'Let the player choose the default track',
-                    isSelected: selected.id == 'auto',
-                    accent: accent,
-                    onSelected: onSelected,
-                  ),
-                  for (final t in tracks)
-                    _AudioRow(
-                      track: t,
-                      title: _audioTitle(t),
-                      subtitle: _audioDetail(t),
-                      isDefault: t.isDefault == true,
-                      isSelected: selected.id == t.id,
-                      accent: accent,
-                      onSelected: onSelected,
-                    ),
-                  if (tracks.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 12, 16, 16),
-                      child: Text(
-                        'No audio tracks found.',
-                        style: TextStyle(
-                            color: Colors.white70, height: 1.5, fontSize: 13),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AudioRow extends StatelessWidget {
-  const _AudioRow({
-    required this.track,
-    required this.title,
-    required this.subtitle,
-    required this.isSelected,
-    required this.accent,
-    required this.onSelected,
-    this.isDefault = false,
-  });
-
-  final AudioTrack track;
-  final String title;
-  final String? subtitle;
-  final bool isSelected;
-  final bool isDefault;
-  final Color accent;
-  final ValueChanged<AudioTrack> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final icon = track.id == 'auto'
-        ? Icons.auto_awesome_rounded
-        : Icons.audiotrack_rounded;
-    return InkWell(
-      onTap: () => onSelected(track),
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color:
-              isSelected ? accent.withValues(alpha: 0.16) : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: isSelected ? accent : Colors.white70),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: isSelected
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
-                            )),
-                      ),
-                      if (isDefault) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 5, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: accent.withValues(alpha: 0.22),
-                            borderRadius: BorderRadius.circular(5),
-                          ),
-                          child: const Text('DEFAULT',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.6,
-                              )),
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: tracks.length,
+                itemBuilder: (context, index) {
+                  final t = tracks[index];
+                  final isSelected = t.id == selected.id;
+                  return HoverButton(
+                    onPressed: () => onSelected(t),
+                    builder: (context, states) {
+                      final hovered =
+                          states.contains(WidgetState.hovered);
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 80),
+                        color: isSelected
+                            ? colors.accent.withValues(alpha: 0.08)
+                            : hovered
+                                ? colors.onSurface
+                                    .withValues(alpha: 0.04)
+                                : Colors.transparent,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        child: Row(
+                          children: [
+                            Icon(FluentIcons.music_note,
+                                size: 14,
+                                color: isSelected
+                                    ? colors.accent
+                                    : colors.onSurfaceVariant),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                t.title ?? t.language ?? 'Track ${t.id}',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                  color: isSelected
+                                      ? colors.accent
+                                      : colors.onSurface,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (isSelected)
+                              Icon(FluentIcons.check_mark,
+                                  size: 12, color: colors.accent),
+                          ],
                         ),
-                      ],
-                    ],
-                  ),
-                  if (subtitle != null && subtitle!.isNotEmpty) ...[
-                    const SizedBox(height: 1),
-                    Text(subtitle!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Colors.white54, fontSize: 12)),
-                  ],
-                ],
+                      );
+                    },
+                  );
+                },
               ),
             ),
-            const SizedBox(width: 8),
-            if (isSelected) Icon(Icons.check_rounded, color: accent, size: 20),
           ],
         ),
       ),
@@ -1288,97 +1046,57 @@ class _AudioRow extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Platform brightness & volume helpers
+// Subtitle choices
 // ---------------------------------------------------------------------------
 
-class _PlatformBrightnessHelper implements BrightnessHelper {
-  double _current = 0.5;
-
-  /// The system brightness captured on init; [reset] restores it so the
-  /// player's temporary brightness changes don't leak into the system.
-  double? _initial;
-
-  _PlatformBrightnessHelper() {
-    unawaited(_init());
-  }
-
-  Future<void> _init() async {
-    if (Platform.isAndroid) {
-      try {
-        const platform = MethodChannel('com.example.app/brightness');
-        final value = await platform.invokeMethod<double>('getBrightness');
-        if (value != null) {
-          _initial = value;
-          _current = value;
-        }
-      } catch (_) {}
-    }
-  }
-
-  @override
-  double get current => _current;
-
-  @override
-  Future<void> set(double value) async {
-    _current = value;
-    if (Platform.isAndroid) {
-      try {
-        const platform = MethodChannel('com.example.app/brightness');
-        await platform.invokeMethod<void>('setBrightness', {'value': value});
-      } catch (_) {}
-    }
-  }
-
-  /// Restores the brightness the device had when the player opened.
-  Future<void> reset() async {
-    final initial = _initial;
-    if (initial == null) return;
-    if (Platform.isAndroid) {
-      try {
-        const platform = MethodChannel('com.example.app/brightness');
-        await platform.invokeMethod<void>('setBrightness', {'value': initial});
-      } catch (_) {}
-    }
-  }
+sealed class _SubtitleChoice {
+  const _SubtitleChoice();
+  String get id;
+  String get label;
+  IconData get icon;
 }
 
-class _PlatformVolumeHelper implements VolumeHelper {
-  double _current = 0.5;
-
-  _PlatformVolumeHelper() {
-    unawaited(_init());
-  }
-
-  Future<void> _init() async {
-    if (Platform.isAndroid) {
-      try {
-        const platform = MethodChannel('com.example.app/volume');
-        final value = await platform.invokeMethod<double>('getVolume');
-        if (value != null) {
-          _current = value;
-        }
-      } catch (_) {}
-    }
-  }
-
+class _OffChoice extends _SubtitleChoice {
+  const _OffChoice();
   @override
-  double get current => _current;
-
+  String get id => 'off';
   @override
-  Future<void> set(double value) async {
-    _current = value;
-    if (Platform.isAndroid) {
-      try {
-        const platform = MethodChannel('com.example.app/volume');
-        await platform.invokeMethod<void>('setVolume', {'value': value});
-      } catch (_) {}
-    }
-  }
+  String get label => 'Off';
+  @override
+  IconData get icon => FluentIcons.clear;
 }
 
-// ---------------------------------------------------------------------------
-// Util
-// ---------------------------------------------------------------------------
+class _AutoChoice extends _SubtitleChoice {
+  const _AutoChoice();
+  @override
+  String get id => 'auto';
+  @override
+  String get label => 'Auto';
+  @override
+  IconData get icon => FluentIcons.auto_enhance_on;
+}
+
+class _EmbeddedChoice extends _SubtitleChoice {
+  const _EmbeddedChoice({required this.track});
+  final SubtitleTrack track;
+  @override
+  String get id => 'embedded:${track.id}';
+  @override
+  String get label => track.title ?? track.language ?? 'Track ${track.id}';
+  @override
+  IconData get icon => FluentIcons.closed_caption;
+}
+
+class _ExternalChoice extends _SubtitleChoice {
+  const _ExternalChoice({required this.item});
+  final DriveItem item;
+  @override
+  String get id => 'external:${item.id}';
+  @override
+  String get label => item.name;
+  @override
+  IconData get icon => FluentIcons.document;
+}
 
 String _formatDuration(Duration d) {
   final h = d.inHours;
@@ -1387,46 +1105,4 @@ String _formatDuration(Duration d) {
   final mm = m.toString().padLeft(2, '0');
   final ss = s.toString().padLeft(2, '0');
   return h > 0 ? '$h:$mm:$ss' : '$m:$ss';
-}
-
-// ---------------------------------------------------------------------------
-// Audio track display helpers
-// ---------------------------------------------------------------------------
-
-String _audioTitle(AudioTrack t) {
-  return t.title ??
-      _subtitleLang.nameOfCode(t.language) ??
-      t.language ??
-      'Track ${t.id}';
-}
-
-String _audioChannelsLabel(AudioTrack t) {
-  final cc = t.channelscount;
-  if (cc != null) {
-    return switch (cc) {
-      1 => 'Mono',
-      2 => 'Stereo',
-      6 => '5.1',
-      8 => '7.1',
-      _ => '${cc}ch',
-    };
-  }
-  final c = t.channels;
-  if (c != null && c.isNotEmpty) return c;
-  return '';
-}
-
-String? _audioDetail(AudioTrack t) {
-  final parts = <String>[];
-  // When the title is the track name, show the language separately here.
-  if (t.title != null) {
-    final ln = _subtitleLang.nameOfCode(t.language) ?? t.language;
-    if (ln != null) parts.add(ln);
-  }
-  final ch = _audioChannelsLabel(t);
-  if (ch.isNotEmpty) parts.add(ch);
-  if (t.codec != null && t.codec!.isNotEmpty) {
-    parts.add(t.codec!.toUpperCase());
-  }
-  return parts.isEmpty ? null : parts.join(' · ');
 }

@@ -9,7 +9,7 @@
 
 一个**跨端(Android + Windows)的 OneDrive 视频播放器**,能登录微软账号、浏览 OneDrive 文件夹、流式播放里面的视频(支持拖动进度条)。
 
-技术栈:**Flutter 3.41 + media_kit(libmpv)+ Riverpod + dio**
+技术栈:**Flutter 3.47 + media_kit(libmpv)+ Riverpod + dio**
 
 ---
 

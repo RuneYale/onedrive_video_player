@@ -1,144 +1,121 @@
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models/subtitle_style.dart';
+import '../core/theme/app_theme.dart';
 import '../providers/subtitle_style_provider.dart';
 
 /// Lets the user customize the on-screen subtitle appearance. Changes are
 /// applied live (via the watched [subtitleStyleProvider]) and persisted on
-/// every adjustment. Designed to be presented inside a [Dialog] (or a bottom
-/// sheet); pass [onClose] to render a close button.
+/// every adjustment. Designed to be presented as the content of a
+/// [ContentDialog]; the host supplies the title and actions.
 class SubtitleStyleEditor extends ConsumerWidget {
-  const SubtitleStyleEditor({super.key, this.onClose});
-
-  /// Called when the user taps the close button. When `null` no close button
-  /// is shown (use when the host surface dismisses itself).
-  final VoidCallback? onClose;
+  const SubtitleStyleEditor({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final style = ref.watch(subtitleStyleProvider);
     final notifier = ref.read(subtitleStyleProvider.notifier);
-    final scheme = Theme.of(context).colorScheme;
 
-    return SafeArea(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.8,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 16, 12),
-              child: Row(
-                children: [
-                  Icon(Icons.format_size_rounded, size: 22, color: scheme.primary),
-                  const SizedBox(width: 10),
-                  Text('Subtitle appearance',
-                      style: Theme.of(context).textTheme.titleLarge),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: notifier.reset,
-                    child: const Text('Reset'),
-                  ),
-                  if (onClose != null)
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded),
-                      onPressed: onClose,
-                      tooltip: 'Close',
-                    ),
-                ],
-              ),
-            ),
-            Divider(height: 1, color: scheme.outlineVariant),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                children: [
-                  _Preview(style: style),
-                  const SizedBox(height: 20),
-                  const _SectionLabel('Text'),
-                  _SliderRow(
-                    label: 'Size',
-                    valueText: style.fontSize.toStringAsFixed(0),
-                    value: style.fontSize,
-                    min: 12,
-                    max: 64,
-                    onChanged: (v) => notifier.update(style.copyWith(fontSize: v)),
-                  ),
-                  _SliderRow(
-                    label: 'Line height',
-                    valueText: style.lineHeight.toStringAsFixed(2),
-                    value: style.lineHeight,
-                    min: 1.0,
-                    max: 2.5,
-                    onChanged: (v) => notifier.update(style.copyWith(lineHeight: v)),
-                  ),
-                  _WeightPicker(
-                    value: style.fontWeight,
-                    onChanged: (w) => notifier.update(style.copyWith(fontWeight: w)),
-                  ),
-                  const SizedBox(height: 12),
-                  _ColorRow(
-                    label: 'Text color',
-                    color: style.color,
-                    onColor: (c) => notifier.update(style.copyWith(color: c)),
-                  ),
-                  const SizedBox(height: 16),
-                  const _SectionLabel('Background'),
-                  _SwitchRow(
-                    label: 'Show background',
-                    value: style.showBackground,
-                    onChanged: (v) =>
-                        notifier.update(style.copyWith(showBackground: v)),
-                  ),
-                  if (style.showBackground) ...[
-                    const SizedBox(height: 8),
-                    _ColorRow(
-                      label: 'Background color',
-                      color: style.backgroundColor,
-                      onColor: (c) =>
-                          notifier.update(style.copyWith(backgroundColor: c)),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  const _SectionLabel('Outline'),
-                  _SwitchRow(
-                    label: 'Enable outline',
-                    value: style.outlineEnabled,
-                    onChanged: (v) =>
-                        notifier.update(style.copyWith(outlineEnabled: v)),
-                  ),
-                  if (style.outlineEnabled) ...[
-                    const SizedBox(height: 8),
-                    _SliderRow(
-                      label: 'Outline width',
-                      valueText: style.outlineWidth.toStringAsFixed(1),
-                      value: style.outlineWidth,
-                      min: 0.5,
-                      max: 6,
-                      onChanged: (v) =>
-                          notifier.update(style.copyWith(outlineWidth: v)),
-                    ),
-                    const SizedBox(height: 4),
-                    _ColorRow(
-                      label: 'Outline color',
-                      color: style.outlineColor,
-                      onColor: (c) =>
-                          notifier.update(style.copyWith(outlineColor: c)),
-                    ),
-                  ],
-                  const SizedBox(height: 24),
-                ],
-              ),
+    return SizedBox(
+      width: 420,
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          _Preview(style: style),
+          const SizedBox(height: 20),
+          const _SectionLabel('Text'),
+          _SliderRow(
+            label: 'Size',
+            valueText: style.fontSize.toStringAsFixed(0),
+            value: style.fontSize,
+            min: 12,
+            max: 64,
+            onChanged: (v) => notifier.update(style.copyWith(fontSize: v)),
+          ),
+          _SliderRow(
+            label: 'Line height',
+            valueText: style.lineHeight.toStringAsFixed(2),
+            value: style.lineHeight,
+            min: 1.0,
+            max: 2.5,
+            onChanged: (v) => notifier.update(style.copyWith(lineHeight: v)),
+          ),
+          _WeightPicker(
+            value: style.fontWeight,
+            onChanged: (w) => notifier.update(style.copyWith(fontWeight: w)),
+          ),
+          const SizedBox(height: 12),
+          _ColorRow(
+            label: 'Text color',
+            color: style.color,
+            onColor: (c) => notifier.update(style.copyWith(color: c)),
+          ),
+          const SizedBox(height: 16),
+          const _SectionLabel('Background'),
+          _SwitchRow(
+            label: 'Show background',
+            value: style.showBackground,
+            onChanged: (v) =>
+                notifier.update(style.copyWith(showBackground: v)),
+          ),
+          if (style.showBackground) ...[
+            const SizedBox(height: 8),
+            _ColorRow(
+              label: 'Background color',
+              color: style.backgroundColor,
+              onColor: (c) =>
+                  notifier.update(style.copyWith(backgroundColor: c)),
             ),
           ],
-        ),
+          const SizedBox(height: 16),
+          const _SectionLabel('Outline'),
+          _SwitchRow(
+            label: 'Enable outline',
+            value: style.outlineEnabled,
+            onChanged: (v) =>
+                notifier.update(style.copyWith(outlineEnabled: v)),
+          ),
+          if (style.outlineEnabled) ...[
+            const SizedBox(height: 8),
+            _SliderRow(
+              label: 'Outline width',
+              valueText: style.outlineWidth.toStringAsFixed(1),
+              value: style.outlineWidth,
+              min: 0.5,
+              max: 6,
+              onChanged: (v) =>
+                  notifier.update(style.copyWith(outlineWidth: v)),
+            ),
+            const SizedBox(height: 4),
+            _ColorRow(
+              label: 'Outline color',
+              color: style.outlineColor,
+              onColor: (c) =>
+                  notifier.update(style.copyWith(outlineColor: c)),
+            ),
+          ],
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }
+}
+
+/// Builds the dialog actions for the subtitle style editor so the host page
+/// stays declarative. [onClose] closes the host dialog.
+List<Widget> subtitleStyleEditorActions(
+  BuildContext context,
+  WidgetRef ref, {
+  required VoidCallback onClose,
+}) {
+  return [
+    HyperlinkButton(
+      onPressed: () => ref.read(subtitleStyleProvider.notifier).reset(),
+      child: const Text('Reset'),
+    ),
+    Button(onPressed: onClose, child: const Text('Close')),
+  ];
 }
 
 class _Preview extends StatelessWidget {
@@ -152,14 +129,14 @@ class _Preview extends StatelessWidget {
       height: 120,
       decoration: BoxDecoration(
         color: const Color(0xFF1A1C22),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(8),
       ),
       alignment: Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Stack(
         children: [
           Center(
-            child: Icon(Icons.movie_rounded,
+            child: Icon(FluentIcons.video,
                 size: 64, color: Colors.white.withValues(alpha: 0.08)),
           ),
           Align(
@@ -221,8 +198,10 @@ class _SectionLabel extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Text(text,
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+          style: FluentTheme.of(context).typography.caption?.copyWith(
+                color: context.colors.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
               )),
     );
   }
@@ -258,8 +237,7 @@ class _SliderRow extends StatelessWidget {
             width: 44,
             child: Text(valueText,
                 textAlign: TextAlign.end,
-                style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                style: TextStyle(color: context.colors.onSurfaceVariant)),
           ),
         ],
       ),
@@ -275,11 +253,13 @@ class _SwitchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(label),
-      value: value,
-      onChanged: onChanged,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: ToggleSwitch(
+        checked: value,
+        onChanged: onChanged,
+        content: Text(label),
+      ),
     );
   }
 }
@@ -298,7 +278,6 @@ class _WeightPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -307,14 +286,17 @@ class _WeightPicker extends StatelessWidget {
           Expanded(
             child: Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: [
                 for (final o in options)
-                  ChoiceChip(
-                    label: Text(o.$2),
-                    selected: value == o.$1,
-                    onSelected: (_) => onChanged(o.$1),
-                    visualDensity: VisualDensity.compact,
-                    selectedColor: scheme.primary.withValues(alpha: 0.18),
+                  ToggleButton(
+                    checked: value == o.$1,
+                    onChanged: (_) => onChanged(o.$1),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      child: Text(o.$2),
+                    ),
                   ),
               ],
             ),
@@ -347,6 +329,7 @@ class _ColorRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.colors;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -367,9 +350,7 @@ class _ColorRow extends StatelessWidget {
                         color: c,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: color == c
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.outline,
+                          color: color == c ? colors.accent : colors.outline,
                           width: color == c ? 3 : 1,
                         ),
                       ),
