@@ -58,7 +58,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           // Videos tab
           folder == null ? const _FolderPrompt() : const BrowserPage(),
           // Recent tab
-          const RecentPage(),
+          RecentPage(onBrowseVideos: () => setState(() => _index = 0)),
           // Settings tab
           const SettingsPage(),
         ],
@@ -82,9 +82,11 @@ class _FolderPrompt extends ConsumerWidget {
             'Choose a folder from your OneDrive to use as your video library.',
         actionLabel: 'Pick a folder',
         onAction: () {
-          unawaited(Navigator.of(context).push(
-            FluentPageRoute<void>(builder: (_) => const FolderPickerPage()),
-          ));
+          unawaited(
+            Navigator.of(context).push(
+              FluentPageRoute<void>(builder: (_) => const FolderPickerPage()),
+            ),
+          );
         },
       ),
     );

@@ -645,8 +645,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                             tween: Tween(begin: 0.0, end: 1.0),
                             duration: const Duration(milliseconds: 150),
                             curve: Curves.easeOut,
-                            builder: (context, t, child) =>
-                                Opacity(opacity: 0.4 * t, child: child),
+                            builder: (context, t, child) => Opacity(
+                              opacity: AppAlpha.muted * t,
+                              child: child,
+                            ),
                             child: GestureDetector(
                               behavior: HitTestBehavior.opaque,
                               onTap: _closeSubtitlePanel,
@@ -682,8 +684,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                             tween: Tween(begin: 0.0, end: 1.0),
                             duration: const Duration(milliseconds: 150),
                             curve: Curves.easeOut,
-                            builder: (context, t, child) =>
-                                Opacity(opacity: 0.4 * t, child: child),
+                            builder: (context, t, child) => Opacity(
+                              opacity: AppAlpha.muted * t,
+                              child: child,
+                            ),
                             child: GestureDetector(
                               behavior: HitTestBehavior.opaque,
                               onTap: _closeAudioPanel,
@@ -871,7 +875,7 @@ class _SpeedBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.6),
+        color: Colors.black.withValues(alpha: AppAlpha.overlay),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
       ),
@@ -1052,14 +1056,7 @@ class _SubtitlePanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: colors.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.outlineVariant),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.30),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        boxShadow: AppShadow.modal,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1126,7 +1123,7 @@ class _SubtitlePanel extends StatelessWidget {
                 ),
                 decoration: BoxDecoration(
                   color: hovered
-                      ? colors.onSurface.withValues(alpha: 0.04)
+                      ? colors.onSurface.withValues(alpha: AppAlpha.hoverWash)
                       : Colors.transparent,
                   borderRadius: const BorderRadius.vertical(
                     bottom: Radius.circular(12),
@@ -1143,7 +1140,7 @@ class _SubtitlePanel extends StatelessWidget {
                     Expanded(
                       child: Text(
                         'Customize appearance',
-                        style: TextStyle(fontSize: 13, color: colors.onSurface),
+                        style: TextStyle(fontSize: 14, color: colors.onSurface),
                       ),
                     ),
                     Icon(
@@ -1176,7 +1173,7 @@ class _GroupLabel extends StatelessWidget {
       child: Text(
         label.toUpperCase(),
         style: TextStyle(
-          fontSize: 10.5,
+          fontSize: 12,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.9,
           color: colors.onSurfaceVariant,
@@ -1213,9 +1210,9 @@ class _ChoiceTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: selected
-                ? colors.accent.withValues(alpha: 0.10)
+                ? colors.accent.withValues(alpha: AppAlpha.tint)
                 : hovered
-                ? colors.onSurface.withValues(alpha: 0.05)
+                ? colors.onSurface.withValues(alpha: AppAlpha.hoverWash)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
@@ -1231,7 +1228,7 @@ class _ChoiceTile extends StatelessWidget {
                 child: Text(
                   choice.label,
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 14,
                     fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                     color: selected ? colors.accent : colors.onSurface,
                   ),
@@ -1281,14 +1278,7 @@ class _AudioPanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: colors.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.outlineVariant),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.30),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        boxShadow: AppShadow.modal,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1335,9 +1325,11 @@ class _AudioPanel extends StatelessWidget {
                       ),
                       decoration: BoxDecoration(
                         color: isSelected
-                            ? colors.accent.withValues(alpha: 0.10)
+                            ? colors.accent.withValues(alpha: AppAlpha.tint)
                             : hovered
-                            ? colors.onSurface.withValues(alpha: 0.05)
+                            ? colors.onSurface.withValues(
+                                alpha: AppAlpha.hoverWash,
+                              )
                             : Colors.transparent,
                         borderRadius: BorderRadius.circular(8),
                       ),
@@ -1355,7 +1347,7 @@ class _AudioPanel extends StatelessWidget {
                             child: Text(
                               t.title ?? t.language ?? 'Track ${t.id}',
                               style: TextStyle(
-                                fontSize: 13,
+                                fontSize: 14,
                                 fontWeight: isSelected
                                     ? FontWeight.w600
                                     : FontWeight.normal,

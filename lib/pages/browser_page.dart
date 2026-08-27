@@ -30,7 +30,10 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final drive = ref.read(driveProvider);
-      if (drive.isReady && drive.items.isEmpty && !drive.loading && drive.error == null) {
+      if (drive.isReady &&
+          drive.items.isEmpty &&
+          !drive.loading &&
+          drive.error == null) {
         unawaited(ref.read(driveProvider.notifier).refresh());
       }
     });
@@ -72,6 +75,7 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
             child: const Text('Cancel'),
           ),
           FilledButton(
+            style: AppTheme.destructiveConfirm(ctx),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Clear'),
           ),
@@ -106,10 +110,13 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
               child: IconButton(
                 icon: const Icon(FluentIcons.folder_open, size: 18),
                 onPressed: () {
-                  unawaited(Navigator.of(context).push(
-                    FluentPageRoute<void>(
-                        builder: (_) => const FolderPickerPage()),
-                  ));
+                  unawaited(
+                    Navigator.of(context).push(
+                      FluentPageRoute<void>(
+                        builder: (_) => const FolderPickerPage(),
+                      ),
+                    ),
+                  );
                 },
               ),
             ),
@@ -164,6 +171,7 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
             child: const Text('Cancel'),
           ),
           FilledButton(
+            style: AppTheme.destructiveConfirm(ctx),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Clear all'),
           ),
@@ -243,8 +251,8 @@ class _Body extends StatelessWidget {
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 200,
         childAspectRatio: 0.68,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
       ),
       itemCount: items.length,
       itemBuilder: (context, index) {
@@ -308,10 +316,22 @@ class _GridTile extends StatelessWidget {
                       _GridThumbnail(item: item),
                       if (item.isFolder)
                         Container(
-                          color: colors.accent.withValues(alpha: 0.10),
+                          color: colors.accent.withValues(alpha: AppAlpha.tint),
                           alignment: Alignment.center,
-                          child: Icon(FluentIcons.folder_fill,
-                              size: 48, color: colors.accent),
+                          child: Container(
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: colors.accentContainer,
+                              shape: BoxShape.circle,
+                            ),
+                            alignment: Alignment.center,
+                            child: Icon(
+                              FluentIcons.folder_fill,
+                              size: 24,
+                              color: colors.accent,
+                            ),
+                          ),
                         ),
                       if (item.isVideo)
                         const Positioned.fill(
@@ -333,22 +353,32 @@ class _GridTile extends StatelessWidget {
                           right: 6,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
                             decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.6),
+                              color: Colors.black.withValues(
+                                alpha: AppAlpha.overlay,
+                              ),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(FluentIcons.closed_caption,
-                                    size: 11, color: Colors.white),
-                                const SizedBox(width: 2),
-                                Text('$subtitleCount',
-                                    style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.white)),
+                                const Icon(
+                                  FluentIcons.closed_caption,
+                                  size: 12,
+                                  color: Colors.white,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  '$subtitleCount',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -357,7 +387,9 @@ class _GridTile extends StatelessWidget {
                       if (hovered)
                         Positioned.fill(
                           child: ColoredBox(
-                            color: colors.onSurface.withValues(alpha: 0.04),
+                            color: colors.onSurface.withValues(
+                              alpha: AppAlpha.hoverWash,
+                            ),
                           ),
                         ),
                     ],
@@ -369,24 +401,19 @@ class _GridTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(item.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: FluentTheme.of(context)
-                              .typography
-                              .caption
-                              ?.copyWith(
-                                fontWeight: FontWeight.w500,
-                              )),
+                      Text(
+                        item.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: FluentTheme.of(context).typography.caption
+                            ?.copyWith(fontWeight: FontWeight.w500),
+                      ),
                       if (showResume && progress != null) ...[
                         const SizedBox(height: 2),
                         Text(
-                          '${_formatDuration(Duration(
-                            milliseconds:
-                                (progress!.positionSeconds * 1000).round(),
-                          ))} left off',
+                          '${_formatDuration(Duration(milliseconds: (progress!.positionSeconds * 1000).round()))} left off',
                           style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 12,
                             color: colors.onSurfaceVariant,
                             fontFeatures: AppTheme.tabularFigures,
                           ),
@@ -398,7 +425,7 @@ class _GridTile extends StatelessWidget {
                         Text(
                           _formatFileSize(item.size),
                           style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 12,
                             color: colors.onSurfaceVariant,
                             fontFeatures: AppTheme.tabularFigures,
                           ),
@@ -449,10 +476,21 @@ class _ThumbnailPlaceholder extends StatelessWidget {
     return Container(
       color: colors.surfaceContainerHigh,
       alignment: Alignment.center,
-      child: Icon(
-        FluentIcons.video,
-        size: 36,
-        color: colors.onSurfaceVariant.withValues(alpha: 0.4),
+      // Icon stays at its designed size inside a subtly darker circle
+      // (scaling icons up past ~24px makes them look chunky).
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: colors.surfaceContainer,
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: Icon(
+          FluentIcons.video,
+          size: 24,
+          color: colors.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -467,15 +505,11 @@ class _PlayBadge extends StatelessWidget {
       width: 44,
       height: 44,
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.5),
+        color: Colors.black.withValues(alpha: AppAlpha.overlay),
         shape: BoxShape.circle,
       ),
       alignment: Alignment.center,
-      child: const Icon(
-        FluentIcons.play_solid,
-        color: Colors.white,
-        size: 22,
-      ),
+      child: const Icon(FluentIcons.play_solid, color: Colors.white, size: 22),
     );
   }
 }

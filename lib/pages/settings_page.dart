@@ -44,7 +44,7 @@ class SettingsPage extends ConsumerWidget {
                     width: 48,
                     height: 48,
                     decoration: BoxDecoration(
-                      color: colors.accent.withValues(alpha: 0.12),
+                      color: colors.accent.withValues(alpha: AppAlpha.tint),
                       shape: BoxShape.circle,
                     ),
                     alignment: Alignment.center,
@@ -64,14 +64,18 @@ class SettingsPage extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(displayName ?? 'Signed in',
-                            style:
-                                FluentTheme.of(context).typography.bodyStrong),
+                        Text(
+                          displayName ?? 'Signed in',
+                          style: FluentTheme.of(context).typography.bodyStrong,
+                        ),
                         if (email != null)
-                          Text(email,
-                              style: TextStyle(
-                                  color: colors.onSurfaceVariant,
-                                  fontSize: 13)),
+                          Text(
+                            email,
+                            style: TextStyle(
+                              color: colors.onSurfaceVariant,
+                              fontSize: 12,
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -122,9 +126,11 @@ class SettingsPage extends ConsumerWidget {
   }
 
   void _changeFolder(BuildContext context) {
-    unawaited(Navigator.of(context).push(
-      FluentPageRoute<void>(builder: (_) => const FolderPickerPage()),
-    ));
+    unawaited(
+      Navigator.of(
+        context,
+      ).push(FluentPageRoute<void>(builder: (_) => const FolderPickerPage())),
+    );
   }
 
   Future<void> _confirmSignOut(BuildContext context, WidgetRef ref) async {
@@ -133,13 +139,15 @@ class SettingsPage extends ConsumerWidget {
       builder: (ctx) => ContentDialog(
         title: const Text('Sign out?'),
         content: const Text(
-            'You will need to sign in again to browse your OneDrive videos.'),
+          'You will need to sign in again to browse your OneDrive videos.',
+        ),
         actions: [
           Button(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
           FilledButton(
+            style: AppTheme.destructiveConfirm(ctx),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Sign out'),
           ),
@@ -165,12 +173,14 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 8),
-      child: Text(text,
-          style: FluentTheme.of(context).typography.caption?.copyWith(
-                color: context.colors.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.4,
-              )),
+      child: Text(
+        text,
+        style: FluentTheme.of(context).typography.caption?.copyWith(
+          color: context.colors.onSurfaceVariant,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.4,
+        ),
+      ),
     );
   }
 }

@@ -13,7 +13,11 @@ import '../providers/playback_provider.dart';
 
 /// Recent-play tab: shows videos the user has watched, sorted by most recent.
 class RecentPage extends ConsumerStatefulWidget {
-  const RecentPage({super.key});
+  const RecentPage({super.key, this.onBrowseVideos});
+
+  /// Called when the empty state's "Browse videos" action is tapped; the
+  /// shell ([HomePage]) uses it to switch back to the Videos tab.
+  final VoidCallback? onBrowseVideos;
 
   @override
   ConsumerState<RecentPage> createState() => _RecentPageState();
@@ -42,10 +46,12 @@ class _RecentPageState extends ConsumerState<RecentPage> {
     return ScaffoldPage(
       header: const PageHeader(title: Text('Recent')),
       content: recent.isEmpty
-          ? const EmptyState(
+          ? EmptyState(
               icon: FluentIcons.history,
               title: 'No recent plays',
               message: 'Videos you watch will appear here for quick access.',
+              actionLabel: 'Browse videos',
+              onAction: widget.onBrowseVideos,
             )
           : _RecentList(entries: recent),
     );
@@ -66,7 +72,7 @@ class _RecentList extends ConsumerWidget {
         final progress = entry.value;
         final colors = context.colors;
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 3),
+          padding: const EdgeInsets.symmetric(vertical: 4),
           child: Card(
             padding: EdgeInsetsDirectional.zero,
             child: HoverButton(
@@ -77,7 +83,7 @@ class _RecentList extends ConsumerWidget {
                 return AnimatedContainer(
                   duration: const Duration(milliseconds: 100),
                   color: hovered
-                      ? colors.onSurface.withValues(alpha: 0.03)
+                      ? colors.onSurface.withValues(alpha: AppAlpha.hoverWash)
                       : Colors.transparent,
                   padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
                   child: Row(
@@ -98,19 +104,21 @@ class _RecentList extends ConsumerWidget {
                                   errorWidget: (_, _, _) => Container(
                                     color: colors.surfaceContainerHigh,
                                     alignment: Alignment.center,
-                                    child: Icon(FluentIcons.video,
-                                        size: 20,
-                                        color: colors.onSurfaceVariant
-                                            .withValues(alpha: 0.4)),
+                                    child: Icon(
+                                      FluentIcons.video,
+                                      size: 20,
+                                      color: colors.onSurfaceVariant,
+                                    ),
                                   ),
                                 )
                               : Container(
                                   color: colors.surfaceContainerHigh,
                                   alignment: Alignment.center,
-                                  child: Icon(FluentIcons.video,
-                                      size: 20,
-                                      color: colors.onSurfaceVariant
-                                          .withValues(alpha: 0.4)),
+                                  child: Icon(
+                                    FluentIcons.video,
+                                    size: 20,
+                                    color: colors.onSurfaceVariant,
+                                  ),
                                 ),
                         ),
                       ),
@@ -121,35 +129,31 @@ class _RecentList extends ConsumerWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(progress.name!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: FluentTheme.of(context)
-                                    .typography
-                                    .bodyStrong),
+                            Text(
+                              progress.name!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: FluentTheme.of(context)
+                                  .typography
+                                  .bodyStrong,
+                            ),
                             const SizedBox(height: 4),
                             if (progress.durationSeconds > 0) ...[
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(99),
                                 child: ProgressBar(
-                                  value:
-                                      (progress.fraction * 100).clamp(0, 100),
+                                  value: (progress.fraction * 100).clamp(
+                                    0,
+                                    100,
+                                  ),
                                   strokeWidth: 3,
                                 ),
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '${_fmt(Duration(
-                                  milliseconds:
-                                      (progress.positionSeconds * 1000)
-                                          .round(),
-                                ))} / ${_fmt(Duration(
-                                  milliseconds:
-                                      (progress.durationSeconds * 1000)
-                                          .round(),
-                                ))}',
+                                '${_fmt(Duration(milliseconds: (progress.positionSeconds * 1000).round()))} / ${_fmt(Duration(milliseconds: (progress.durationSeconds * 1000).round()))}',
                                 style: TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   color: colors.onSurfaceVariant,
                                   fontFeatures: AppTheme.tabularFigures,
                                 ),
@@ -158,7 +162,7 @@ class _RecentList extends ConsumerWidget {
                               Text(
                                 _timeAgo(progress.updatedAt),
                                 style: TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   color: colors.onSurfaceVariant,
                                 ),
                               ),
@@ -166,8 +170,11 @@ class _RecentList extends ConsumerWidget {
                         ),
                       ),
                       const SizedBox(width: 4),
-                      Icon(FluentIcons.play_solid,
-                          size: 16, color: colors.accent),
+                      Icon(
+                        FluentIcons.play_solid,
+                        size: 16,
+                        color: colors.accent,
+                      ),
                     ],
                   ),
                 );
@@ -195,10 +202,7 @@ class _RecentList extends ConsumerWidget {
     );
     await Navigator.of(context).push(
       FluentPageRoute<void>(
-        builder: (_) => PlayerPage(
-          video: item,
-          siblings: const [],
-        ),
+        builder: (_) => PlayerPage(video: item, siblings: const []),
       ),
     );
     if (context.mounted) {
@@ -216,13 +220,15 @@ class _RecentList extends ConsumerWidget {
       builder: (ctx) => ContentDialog(
         title: const Text('Remove from recent?'),
         content: const Text(
-            'This will also clear the resume position for this video.'),
+          'This will also clear the resume position for this video.',
+        ),
         actions: [
           Button(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
           FilledButton(
+            style: AppTheme.destructiveConfirm(ctx),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Remove'),
           ),

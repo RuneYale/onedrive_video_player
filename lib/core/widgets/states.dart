@@ -83,9 +83,7 @@ class ErrorState extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               message,
-              style: typography.body?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
+              style: typography.body?.copyWith(color: colors.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),
             if (onRetry != null) ...[
@@ -120,9 +118,8 @@ class LoadingState extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               label!,
-              style: FluentTheme.of(context).typography.body?.copyWith(
-                    color: context.colors.onSurfaceVariant,
-                  ),
+              style: FluentTheme.of(context).typography.body
+                  ?.copyWith(color: context.colors.onSurfaceVariant),
             ),
           ],
         ],
@@ -144,7 +141,7 @@ class _IconBadge extends StatelessWidget {
       width: 64,
       height: 64,
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
+        color: color.withValues(alpha: AppAlpha.tint),
         shape: BoxShape.circle,
       ),
       alignment: Alignment.center,

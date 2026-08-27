@@ -40,8 +40,7 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
       final graph = ref.read(graphServiceProvider);
       final items = await graph.listChildren(_stack.last.id);
       // Only show folders
-      final folders =
-          items.where((i) => i.isFolder).toList();
+      final folders = items.where((i) => i.isFolder).toList();
       if (mounted) {
         setState(() {
           _items = folders;
@@ -72,21 +71,31 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
 
   void _confirm() {
     final folder = _stack.last;
-    unawaited(ref.read(folderProvider.notifier).select(
-          SelectedFolder(id: folder.id, name: folder.name),
-        ));
-    unawaited(ref.read(driveProvider.notifier).setRoot(
-          DriveFolder(folder.id, folder.name),
-        ));
+    unawaited(
+      ref
+          .read(folderProvider.notifier)
+          .select(SelectedFolder(id: folder.id, name: folder.name)),
+    );
+    unawaited(
+      ref
+          .read(driveProvider.notifier)
+          .setRoot(DriveFolder(folder.id, folder.name)),
+    );
     // InfoBar is shown from the page below after pop so it isn't clipped by
     // the route transition.
     Navigator.of(context).pop();
-    unawaited(displayInfoBar(context, builder: (context, close) {
-      return InfoBar(
-        title: Text('"${folder.name}" set as your video folder'),
-        severity: InfoBarSeverity.success,
-      );
-    }, duration: const Duration(seconds: 2)));
+    unawaited(
+      displayInfoBar(
+        context,
+        builder: (context, close) {
+          return InfoBar(
+            title: Text('"${folder.name}" set as your video folder'),
+            severity: InfoBarSeverity.success,
+          );
+        },
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -147,7 +156,8 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
       return EmptyState(
         icon: FluentIcons.folder_open,
         title: 'No folders here',
-        message: 'This folder has no sub-folders. Pick another one or use '
+        message:
+            'This folder has no sub-folders. Pick another one or use '
             'this folder as your video library.',
         actionLabel: 'Use this folder',
         onAction: _confirm,
@@ -195,15 +205,21 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: colors.accent.withValues(alpha: 0.12),
+                      color: colors.accent.withValues(alpha: AppAlpha.tint),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     alignment: Alignment.center,
-                    child: Icon(FluentIcons.folder_fill,
-                        size: 20, color: colors.accent),
+                    child: Icon(
+                      FluentIcons.folder_fill,
+                      size: 20,
+                      color: colors.accent,
+                    ),
                   ),
-                  title: Text(item.name,
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  title: Text(
+                    item.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   trailing: const Icon(FluentIcons.chevron_right, size: 12),
                 ),
               );

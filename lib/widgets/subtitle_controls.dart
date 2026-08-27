@@ -23,13 +23,13 @@ VideoControlsBuilder subtitleVideoControlsBuilder({
   bool locked = false,
 }) {
   return (state) => _FluentVideoControls(
-        state: state,
-        onSubtitleTap: onSubtitleTap,
-        onSpeedTap: onSpeedTap,
-        onAudioTap: onAudioTap,
-        onLockTap: onLockTap,
-        locked: locked,
-      );
+    state: state,
+    onSubtitleTap: onSubtitleTap,
+    onSpeedTap: onSpeedTap,
+    onAudioTap: onAudioTap,
+    onLockTap: onLockTap,
+    locked: locked,
+  );
 }
 
 class _FluentVideoControls extends StatefulWidget {
@@ -328,8 +328,8 @@ class _VolumeControl extends StatelessWidget {
         final icon = muted
             ? FluentIcons.volume_disabled
             : volume < 50
-                ? FluentIcons.volume1
-                : FluentIcons.volume3;
+            ? FluentIcons.volume1
+            : FluentIcons.volume3;
         return Stack(
           clipBehavior: Clip.none,
           children: [
@@ -410,14 +410,7 @@ class _VolumePopupState extends State<_VolumePopup> {
         decoration: BoxDecoration(
           color: colors.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: colors.outlineVariant),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.30),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
-            ),
-          ],
+          boxShadow: AppShadow.modal,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -426,7 +419,7 @@ class _VolumePopupState extends State<_VolumePopup> {
             Text(
               '${volume.round()}%',
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
                 color: colors.onSurface,
                 fontFeatures: AppTheme.tabularFigures,
@@ -488,7 +481,8 @@ class _SeekBarState extends State<_SeekBar> {
           initialData: player.state.position,
           builder: (context, positionSnap) {
             final position = positionSnap.data ?? Duration.zero;
-            final valueMs = _dragValue ??
+            final valueMs =
+                _dragValue ??
                 position.inMilliseconds.toDouble().clamp(0.0, maxMs);
             return Slider(
               value: maxMs > 0 ? valueMs.clamp(0.0, maxMs) : 0.0,
@@ -502,8 +496,7 @@ class _SeekBarState extends State<_SeekBar> {
                   ? (v) {
                       setState(() => _dragValue = null);
                       widget.onInteract();
-                      unawaited(player.seek(Duration(
-                          milliseconds: v.round())));
+                      unawaited(player.seek(Duration(milliseconds: v.round())));
                     }
                   : null,
             );
@@ -576,8 +569,8 @@ class _ControlButton extends StatelessWidget {
               color: pressed
                   ? Colors.white.withValues(alpha: 0.18)
                   : hovered
-                      ? Colors.white.withValues(alpha: 0.10)
-                      : Colors.transparent,
+                  ? Colors.white.withValues(alpha: 0.10)
+                  : Colors.transparent,
               borderRadius: BorderRadius.circular(4),
             ),
             child: Icon(icon, size: 18, color: Colors.white),

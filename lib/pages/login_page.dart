@@ -27,18 +27,20 @@ class LoginPage extends ConsumerWidget {
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: switch (auth) {
-                  AuthInitial() || AuthRestoring() =>
-                    const LoadingState(label: 'Restoring your session…'),
+                  AuthInitial() || AuthRestoring() => const LoadingState(
+                    label: 'Restoring your session…',
+                  ),
                   AuthAuthenticating(:final deviceCode) => _DeviceCodeView(
-                      deviceCode: deviceCode,
-                      onCancel: notifier.cancelSignIn,
-                    ),
+                    deviceCode: deviceCode,
+                    onCancel: notifier.cancelSignIn,
+                  ),
                   AuthError(:final message) => ErrorState(
-                      message: message,
-                      onRetry: notifier.signIn,
-                    ),
-                  AuthUnauthenticated() =>
-                    _SignInView(onSignIn: notifier.signIn),
+                    message: message,
+                    onRetry: notifier.signIn,
+                  ),
+                  AuthUnauthenticated() => _SignInView(
+                    onSignIn: notifier.signIn,
+                  ),
                   Authenticated() => const SizedBox.shrink(),
                 },
               ),
@@ -73,18 +75,19 @@ class _SignInView extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [colors.accent, colors.accent.withValues(alpha: 0.7)],
+              colors: [
+                colors.accent,
+                colors.accent.withValues(alpha: AppAlpha.soft),
+              ],
             ),
             borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: colors.accent.withValues(alpha: 0.25),
-                blurRadius: 24,
-                offset: const Offset(0, 12),
-              ),
-            ],
+            boxShadow: AppShadow.glow(colors.accent),
           ),
-          child: const Icon(FluentIcons.play_solid, color: Colors.white, size: 44),
+          child: const Icon(
+            FluentIcons.play_solid,
+            color: Colors.white,
+            size: 44,
+          ),
         ),
         const SizedBox(height: 24),
         Text(
@@ -92,7 +95,7 @@ class _SignInView extends StatelessWidget {
           style: typography.titleLarge,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         Text(
           'Stream the videos stored in your OneDrive — sign in to browse and play.',
           textAlign: TextAlign.center,
@@ -101,17 +104,15 @@ class _SignInView extends StatelessWidget {
             height: 1.5,
           ),
         ),
-        const SizedBox(height: 28),
+        const SizedBox(height: 24),
         for (final f in features)
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Row(
               children: [
                 Icon(f.$1, size: 20, color: colors.accent),
                 const SizedBox(width: 12),
-                Expanded(
-                  child: Text(f.$2, style: typography.body),
-                ),
+                Expanded(child: Text(f.$2, style: typography.body)),
               ],
             ),
           ),
@@ -198,9 +199,7 @@ class _DeviceCodeViewState extends State<_DeviceCodeView> {
         Text(
           'Enter this code on any device to securely sign in.',
           textAlign: TextAlign.center,
-          style: typography.body?.copyWith(
-            color: colors.onSurfaceVariant,
-          ),
+          style: typography.body?.copyWith(color: colors.onSurfaceVariant),
         ),
         const SizedBox(height: 24),
         _Step(
@@ -226,7 +225,7 @@ class _DeviceCodeViewState extends State<_DeviceCodeView> {
         ),
         const SizedBox(height: 10),
         _CodeBox(code: dc.userCode, copied: _copied, onCopy: _copy),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -243,15 +242,22 @@ class _DeviceCodeViewState extends State<_DeviceCodeView> {
         ),
         const SizedBox(height: 24),
         const _WaitingRow(),
-        const SizedBox(height: 20),
-        HyperlinkButton(onPressed: widget.onCancel, child: const Text('Cancel')),
+        const SizedBox(height: 24),
+        HyperlinkButton(
+          onPressed: widget.onCancel,
+          child: const Text('Cancel'),
+        ),
       ],
     );
   }
 }
 
 class _Step extends StatelessWidget {
-  const _Step({required this.index, required this.text, required this.trailing});
+  const _Step({
+    required this.index,
+    required this.text,
+    required this.trailing,
+  });
   final int index;
   final String text;
   final Widget trailing;
@@ -266,27 +272,36 @@ class _Step extends StatelessWidget {
           width: 26,
           height: 26,
           decoration: BoxDecoration(
-            color: colors.accent.withValues(alpha: 0.14),
+            color: colors.accent.withValues(alpha: AppAlpha.tint),
             shape: BoxShape.circle,
           ),
           alignment: Alignment.center,
           child: Text(
             '$index',
             style: TextStyle(
-                color: colors.accent, fontWeight: FontWeight.w700, fontSize: 13),
+              color: colors.accent,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
           ),
         ),
         const SizedBox(width: 12),
         Text(text, style: FluentTheme.of(context).typography.bodyStrong),
         const SizedBox(width: 10),
-        Expanded(child: Align(alignment: Alignment.centerLeft, child: trailing)),
+        Expanded(
+          child: Align(alignment: Alignment.centerLeft, child: trailing),
+        ),
       ],
     );
   }
 }
 
 class _CodeBox extends StatelessWidget {
-  const _CodeBox({required this.code, required this.copied, required this.onCopy});
+  const _CodeBox({
+    required this.code,
+    required this.copied,
+    required this.onCopy,
+  });
   final String code;
   final bool copied;
   final VoidCallback onCopy;
@@ -344,8 +359,10 @@ class _WaitingRow extends StatelessWidget {
           child: ProgressRing(strokeWidth: 2, activeColor: colors.accent),
         ),
         const SizedBox(width: 12),
-        Text('Waiting for you to sign in…',
-            style: TextStyle(color: colors.onSurfaceVariant)),
+        Text(
+          'Waiting for you to sign in…',
+          style: TextStyle(color: colors.onSurfaceVariant),
+        ),
       ],
     );
   }
