@@ -1,22 +1,28 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models/drive_item.dart';
 import '../core/services/playback_progress_service.dart';
-import '../core/theme/app_theme.dart';
+import '../core/theme/smartisan_kit.dart';
+import '../core/utils/format.dart';
+import '../core/widgets/dialogs.dart';
+import '../core/widgets/smartisan_extras.dart';
 import '../core/widgets/states.dart';
-import 'player_page.dart';
+import '../core/widgets/video_thumb.dart';
 import '../providers/playback_provider.dart';
+import 'player_page.dart';
 
-/// Recent-play tab: shows videos the user has watched, sorted by most recent.
+/// Recent-play tab: the videos the user has watched, most recent first.
+///
+/// Each row can be swiped **right** to reveal the remove tray — the Smartisan
+/// swipe, not the iOS one — and tapping the tray asks for confirmation.
 class RecentPage extends ConsumerStatefulWidget {
   const RecentPage({super.key, this.onBrowseVideos});
 
-  /// Called when the empty state's "Browse videos" action is tapped; the
-  /// shell ([HomePage]) uses it to switch back to the Videos tab.
+  /// Called when the blank view's action is tapped; the shell switches back to
+  /// the Videos tab.
   final VoidCallback? onBrowseVideos;
 
   @override
@@ -36,150 +42,56 @@ class _RecentPageState extends ConsumerState<RecentPage> {
   Widget build(BuildContext context) {
     final progress = ref.watch(playbackProgressProvider);
 
-    // Sort entries by updatedAt descending
     final entries = progress.entries.toList()
       ..sort((a, b) => b.value.updatedAt.compareTo(a.value.updatedAt));
-
-    // Only show entries that have a name (i.e. metadata was saved)
     final recent = entries.where((e) => e.value.name != null).toList();
 
-    return ScaffoldPage(
-      header: const PageHeader(title: Text('Recent')),
-      content: recent.isEmpty
-          ? EmptyState(
-              icon: FluentIcons.history,
-              title: 'No recent plays',
-              message: 'Videos you watch will appear here for quick access.',
-              actionLabel: 'Browse videos',
-              onAction: widget.onBrowseVideos,
-            )
-          : _RecentList(entries: recent),
+    return Column(
+      children: [
+        SafeArea(bottom: false, child: const SAppBar(title: 'Recent')),
+        Expanded(
+          child: recent.isEmpty
+              ? EmptyState(
+                  icon: SGlyphs.history,
+                  title: 'No recent plays',
+                  message:
+                      'Videos you watch will appear here for quick access.',
+                  actionLabel: 'Browse videos',
+                  onAction: widget.onBrowseVideos,
+                )
+              : _RecentList(entries: recent),
+        ),
+      ],
     );
   }
 }
 
 class _RecentList extends ConsumerWidget {
   const _RecentList({required this.entries});
+
   final List<MapEntry<String, PlaybackProgress>> entries;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+    return SCardList(
       itemCount: entries.length,
       itemBuilder: (context, index) {
         final entry = entries[index];
         final progress = entry.value;
-        final colors = context.colors;
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Card(
-            padding: EdgeInsetsDirectional.zero,
-            child: HoverButton(
-              onPressed: () => _openRecent(context, ref, entry),
-              onLongPress: () => _clearRecent(context, ref, entry.key),
-              builder: (context, states) {
-                final hovered = states.contains(WidgetState.hovered);
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 100),
-                  color: hovered
-                      ? colors.onSurface.withValues(alpha: AppAlpha.hoverWash)
-                      : Colors.transparent,
-                  padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
-                  child: Row(
-                    children: [
-                      // Thumbnail
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: SizedBox(
-                          width: 80,
-                          height: 46,
-                          child: progress.thumbnailUrl != null
-                              ? CachedNetworkImage(
-                                  imageUrl: progress.thumbnailUrl!,
-                                  fit: BoxFit.cover,
-                                  placeholder: (_, _) => Container(
-                                    color: colors.surfaceContainerHigh,
-                                  ),
-                                  errorWidget: (_, _, _) => Container(
-                                    color: colors.surfaceContainerHigh,
-                                    alignment: Alignment.center,
-                                    child: Icon(
-                                      FluentIcons.video,
-                                      size: 20,
-                                      color: colors.onSurfaceVariant,
-                                    ),
-                                  ),
-                                )
-                              : Container(
-                                  color: colors.surfaceContainerHigh,
-                                  alignment: Alignment.center,
-                                  child: Icon(
-                                    FluentIcons.video,
-                                    size: 20,
-                                    color: colors.onSurfaceVariant,
-                                  ),
-                                ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      // Title + progress
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              progress.name!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: FluentTheme.of(context)
-                                  .typography
-                                  .bodyStrong,
-                            ),
-                            const SizedBox(height: 4),
-                            if (progress.durationSeconds > 0) ...[
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(99),
-                                child: ProgressBar(
-                                  value: (progress.fraction * 100).clamp(
-                                    0,
-                                    100,
-                                  ),
-                                  strokeWidth: 3,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${_fmt(Duration(milliseconds: (progress.positionSeconds * 1000).round()))} / ${_fmt(Duration(milliseconds: (progress.durationSeconds * 1000).round()))}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: colors.onSurfaceVariant,
-                                  fontFeatures: AppTheme.tabularFigures,
-                                ),
-                              ),
-                            ] else
-                              Text(
-                                _timeAgo(progress.updatedAt),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: colors.onSurfaceVariant,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        FluentIcons.play_solid,
-                        size: 16,
-                        color: colors.accent,
-                      ),
-                    ],
-                  ),
-                );
-              },
+        return SSwipeRow(
+          actionsWidth: 76,
+          actions: _RemoveAction(
+            onTap: () => unawaited(_clearRecent(context, ref, entry.key)),
+          ),
+          child: SmartisanTile(
+            leading: VideoThumb(url: progress.thumbnailUrl),
+            title: Text(
+              progress.name!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
+            subtitle: _RecentSubtitle(progress: progress),
+            onTap: () => unawaited(_openRecent(context, ref, entry)),
           ),
         );
       },
@@ -201,7 +113,7 @@ class _RecentList extends ConsumerWidget {
       parentId: progress.parentId,
     );
     await Navigator.of(context).push(
-      FluentPageRoute<void>(
+      SPageRoute<void>(
         builder: (_) => PlayerPage(video: item, siblings: const []),
       ),
     );
@@ -215,46 +127,101 @@ class _RecentList extends ConsumerWidget {
     WidgetRef ref,
     String itemId,
   ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => ContentDialog(
-        title: const Text('Remove from recent?'),
-        content: const Text(
-          'This will also clear the resume position for this video.',
-        ),
-        actions: [
-          Button(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: AppTheme.destructiveConfirm(ctx),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
+    final confirmed = await showSConfirmDialog(
+      context,
+      title: 'Remove from recent?',
+      message: 'This will also clear the resume position for this video.',
+      confirmLabel: 'Remove',
+      destructive: true,
     );
-    if (confirmed == true) {
+    if (confirmed) {
       await ref.read(playbackProgressProvider.notifier).clear(itemId);
     }
   }
 }
 
-String _fmt(Duration d) {
-  final h = d.inHours;
-  final m = d.inMinutes.remainder(60);
-  final s = d.inSeconds.remainder(60);
-  final mm = m.toString().padLeft(2, '0');
-  final ss = s.toString().padLeft(2, '0');
-  return h > 0 ? '$h:$mm:$ss' : '$m:$ss';
+/// Position line plus a 2dp accent progress bar under the row title.
+class _RecentSubtitle extends StatelessWidget {
+  const _RecentSubtitle({required this.progress});
+
+  final PlaybackProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    if (progress.durationSeconds <= 0) {
+      return Text(timeAgo(progress.updatedAt));
+    }
+    final at = Duration(milliseconds: (progress.positionSeconds * 1000).round());
+    final total = Duration(
+      milliseconds: (progress.durationSeconds * 1000).round(),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ProgressLine(value: progress.fraction),
+        const SizedBox(height: 4),
+        Text(
+          '${formatDuration(at)} / ${formatDuration(total)}',
+          maxLines: 1,
+        ),
+      ],
+    );
+  }
 }
 
-String _timeAgo(DateTime dt) {
-  final diff = DateTime.now().difference(dt);
-  if (diff.inMinutes < 1) return 'just now';
-  if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-  if (diff.inDays < 1) return '${diff.inHours}h ago';
-  if (diff.inDays < 30) return '${diff.inDays}d ago';
-  return '${dt.month}/${dt.day}';
+/// 2dp track with the accent fill — the kit's slider groove without the thumb.
+class _ProgressLine extends StatelessWidget {
+  const _ProgressLine({required this.value});
+
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.sp;
+    return LayoutBuilder(
+      builder: (context, constraints) => ClipRRect(
+        borderRadius: BorderRadius.circular(1),
+        child: Stack(
+          children: [
+            Container(height: 2, color: p.divider),
+            Container(
+              height: 2,
+              width: constraints.maxWidth * value.clamp(0.0, 1.0),
+              color: p.accent,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The red tray uncovered by a right swipe.
+class _RemoveAction extends StatelessWidget {
+  const _RemoveAction({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final red = context.sp.red;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: SizedBox.expand(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(SGlyphs.trash, size: 20, color: red),
+            const SizedBox(height: 2),
+            Text(
+              'Remove',
+              style: TextStyle(fontSize: 10, color: red),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

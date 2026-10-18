@@ -134,11 +134,33 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
-  HWND window = CreateWindow(
-      window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
-      nullptr, nullptr, GetModuleHandle(nullptr), this);
+  // Never open larger than the monitor's work area: on a 175%-scaled laptop a
+  // 1280x720 DIP window is 2240x1260 physical pixels and would hang off the
+  // screen on all sides.
+  MONITORINFO monitor_info = {};
+  monitor_info.cbSize = sizeof(monitor_info);
+  int window_width = Scale(size.width, scale_factor);
+  int window_height = Scale(size.height, scale_factor);
+  int window_x = Scale(origin.x, scale_factor);
+  int window_y = Scale(origin.y, scale_factor);
+  if (GetMonitorInfo(monitor, &monitor_info)) {
+    const RECT work = monitor_info.rcWork;
+    const int max_width = static_cast<int>((work.right - work.left) * 0.92);
+    const int max_height = static_cast<int>((work.bottom - work.top) * 0.92);
+    if (window_width > max_width) {
+      window_width = max_width;
+    }
+    if (window_height > max_height) {
+      window_height = max_height;
+    }
+    // Centre the window in the work area.
+    window_x = work.left + (work.right - work.left - window_width) / 2;
+    window_y = work.top + (work.bottom - work.top - window_height) / 2;
+  }
+
+  HWND window = CreateWindow(window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
+                             window_x, window_y, window_width, window_height,
+                             nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {
     return false;

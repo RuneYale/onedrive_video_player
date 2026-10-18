@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
@@ -13,6 +13,9 @@ import '../core/services/playback_progress_service.dart';
 import '../core/services/subtitle_preference_service.dart';
 import '../core/services/subtitle_service.dart';
 import '../core/theme/app_theme.dart';
+import '../core/theme/smartisan_kit.dart';
+import '../core/utils/format.dart';
+import '../core/widgets/smartisan_extras.dart';
 import '../core/widgets/states.dart';
 import '../providers/drive_provider.dart';
 import '../providers/subtitle_style_provider.dart';
@@ -20,6 +23,9 @@ import '../widgets/player_gesture_overlay.dart';
 import '../widgets/speed_picker.dart';
 import '../widgets/subtitle_controls.dart';
 import '../widgets/subtitle_style_editor.dart';
+
+/// Sent by the subtitle dialog's appearance action.
+const _kAppearanceAction = 'appearance';
 
 class PlayerPage extends ConsumerStatefulWidget {
   const PlayerPage({required this.video, required this.siblings, super.key});
@@ -61,8 +67,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   String? _selectedSubtitleId;
   String? _loadingSubtitleId;
   bool _locked = false;
-  bool _subtitlePanelOpen = false;
-  bool _audioPanelOpen = false;
   double _speed = 1.0;
 
   Tracks _tracks = const Tracks();
@@ -232,8 +236,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   /// Seeks to the saved position once, waits for the stream to report the
   /// seek landed, then starts playback. Verifying via the position stream
-  /// (instead of fire-and-forget + snackbar) means a failed seek doesn't get
-  /// masked by a "Resumed" toast.
+  /// (instead of fire-and-forget + toast) means a failed seek doesn't get
+  /// masked by a "Resumed" message.
   Future<void> _seekToSavedAndPlay() async {
     if (_resumeSeekDone) return;
     _resumeSeekDone = true;
@@ -260,29 +264,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
     if (_disposed || !mounted) return;
     await _player.play();
-    _showResumeInfoBar(target);
+    if (!mounted) return;
+    showSToast(
+      context,
+      'Resumed from ${formatDuration(target)}',
+      bottom: 118,
+    );
   }
 
   void _onCompleted(bool completed) {
     if (!completed) return;
     _completed = true;
     unawaited(_progress.clear(widget.video.id));
-  }
-
-  void _showResumeInfoBar(Duration position) {
-    if (!mounted) return;
-    unawaited(
-      displayInfoBar(
-        context,
-        builder: (context, close) {
-          return InfoBar(
-            title: Text('Resumed from ${_formatDuration(position)}'),
-            severity: InfoBarSeverity.info,
-          );
-        },
-        duration: const Duration(seconds: 3),
-      ),
-    );
   }
 
   // --- Subtitles ----------------------------------------------------------
@@ -388,23 +381,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       if (persist) {
         unawaited(_subtitlePref.save(widget.video.id, choice.id));
       }
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() => _loadingSubtitleId = null);
       // Silent restoration failures (stale track id, expired subtitle URL)
       // shouldn't pester the user — fall back to the default silently.
       if (silent) return;
-      unawaited(
-        displayInfoBar(
-          context,
-          builder: (context, close) {
-            return InfoBar(
-              title: Text('Could not load subtitle: $e'),
-              severity: InfoBarSeverity.error,
-            );
-          },
-        ),
-      );
+      showSToast(context, 'Could not load subtitle', bottom: 118);
     }
   }
 
@@ -464,13 +447,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   // --- Speed --------------------------------------------------------------
 
   void _onSpeedTap() {
-    showSpeedPicker(
-      context,
-      currentSpeed: _speed,
-      onSelected: (speed) {
-        unawaited(_player.setRate(speed));
-        setState(() => _speed = speed);
-      },
+    unawaited(
+      showSpeedPicker(
+        context,
+        currentSpeed: _speed,
+        onSelected: (speed) {
+          unawaited(_player.setRate(speed));
+          setState(() => _speed = speed);
+        },
+      ),
     );
   }
 
@@ -526,32 +511,37 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     } else {
       body = Stack(
         children: [
-          Video(
-            controller: _controller,
-            fill: AppTheme.playerSurface,
-            controls: _locked
-                ? (_) => const SizedBox.shrink()
-                : subtitleVideoControlsBuilder(
-                    onSubtitleTap: () => _showSubtitlePicker(context),
-                    onSpeedTap: _onSpeedTap,
-                    onAudioTap: _audioTracks.length > 1
-                        ? () => _showAudioPicker(context)
-                        : null,
-                    onLockTap: () {
-                      setState(() => _locked = true);
-                    },
-                    locked: _locked,
-                  ),
-            subtitleViewConfiguration: SubtitleViewConfiguration(
-              visible: true,
-              style: TextStyle(
-                fontSize: subtitleStyle.fontSize,
-                fontWeight: subtitleStyle.fontWeight,
-                color: subtitleStyle.color,
-                height: subtitleStyle.lineHeight,
-                background: subtitleStyle.showBackground
-                    ? (Paint()..color = subtitleStyle.backgroundColor)
-                    : null,
+          // Tight constraints on purpose: left as a loose Stack child the
+          // video surface could size itself from the decoded frame (e.g.
+          // 1920×1080) and push the control bar off-screen.
+          Positioned.fill(
+            child: Video(
+              controller: _controller,
+              fill: AppTheme.playerSurface,
+              controls: _locked
+                  ? (_) => const SizedBox.shrink()
+                  : subtitleVideoControlsBuilder(
+                      onSubtitleTap: () => unawaited(_showSubtitlePicker()),
+                      onSpeedTap: _onSpeedTap,
+                      onAudioTap: _audioTracks.length > 1
+                          ? () => unawaited(_showAudioPicker())
+                          : null,
+                      onLockTap: () {
+                        setState(() => _locked = true);
+                      },
+                      locked: _locked,
+                    ),
+              subtitleViewConfiguration: SubtitleViewConfiguration(
+                visible: true,
+                style: TextStyle(
+                  fontSize: subtitleStyle.fontSize,
+                  fontWeight: subtitleStyle.fontWeight,
+                  color: subtitleStyle.color,
+                  height: subtitleStyle.lineHeight,
+                  background: subtitleStyle.showBackground
+                      ? (Paint()..color = subtitleStyle.backgroundColor)
+                      : null,
+                ),
               ),
             ),
           ),
@@ -576,7 +566,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           // Speed badge
           if (!_locked && _speed != 1.0)
             Positioned(
-              bottom: 60,
+              bottom: 122,
               right: 16,
               child: _SpeedBadge(speed: _speed),
             ),
@@ -584,132 +574,162 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       );
     }
 
+    return PopScope(
+      child: Scaffold(
+        backgroundColor: AppTheme.playerSurface,
+        body: Focus(
+          autofocus: true,
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent &&
+                event.logicalKey == LogicalKeyboardKey.escape) {
+              Navigator.of(context).pop();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: Stack(
+            children: [
+              body,
+              // Always-visible top bar: close button + title
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _TopBar(
+                  title: widget.video.name,
+                  onClose: () => Navigator.of(context).pop(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Real audio tracks (excluding the libmpv 'auto'/'no' placeholders).
+  List<AudioTrack> get _audioTracks =>
+      _tracks.audio.where((t) => t.id != 'auto' && t.id != 'no').toList();
+
+  Future<void> _showSubtitlePicker() async {
     final choices = _choices;
-    _SubtitleChoice? selectedChoice;
-    for (final c in choices) {
-      if (c.id == _selectedSubtitleId) {
-        selectedChoice = c;
-        break;
+    final selectedId = _selectedSubtitleId;
+
+    final groups = <String, List<_SubtitleChoice>>{
+      'State': [
+        for (final c in choices)
+          if (c is _OffChoice || c is _AutoChoice) c,
+      ],
+      'Embedded tracks': [
+        for (final c in choices)
+          if (c is _EmbeddedChoice) c,
+      ],
+      'External subtitles': [
+        for (final c in choices)
+          if (c is _ExternalChoice) c,
+      ],
+    };
+
+    final result = await _showChoiceDialog(
+      title: 'Subtitles',
+      selectedId: selectedId,
+      groups: groups,
+      footer: 'Appearance',
+    );
+    if (!mounted || result == null) return;
+    if (result is String) {
+      // The footer action: open the full-screen appearance editor.
+      if (result == _kAppearanceAction) {
+        await Navigator.of(context).push<void>(
+          SModalPageRoute<void>(
+            builder: (_) => const SubtitleStyleEditorPage(),
+          ),
+        );
+      }
+      return;
+    }
+    await _applySubtitle(result as _SubtitleChoice);
+  }
+
+  Future<void> _showAudioPicker() async {
+    final tracks = _audioTracks;
+    // The row ids are prefixed, so build the same id the choice reports.
+    final selectedId = 'audio:${_currentTrack.audio.id}';
+    final result = await _showChoiceDialog(
+      title: 'Audio track',
+      selectedId: selectedId,
+      groups: {
+        'Tracks': [
+          for (final t in tracks) _AudioChoice(track: t),
+        ],
+      },
+      footer: null,
+    );
+    if (!mounted || result == null) return;
+    if (result is _AudioChoice) {
+      unawaited(_applyAudioTrack(result.track));
+    }
+  }
+
+  /// One dialog for both pickers: a flush white list of 48dp rows whose
+  /// pressed fill is the dialog button grey, and a 54dp action row.
+  Future<Object?> _showChoiceDialog({
+    required String title,
+    required String? selectedId,
+    required Map<String, List<_Choice>> groups,
+    required String? footer,
+  }) {
+    final rows = <Widget>[];
+    for (final entry in groups.entries) {
+      final items = entry.value;
+      if (items.isEmpty) continue;
+      if (rows.isNotEmpty) rows.add(const SDivider(indent: 16));
+      rows.add(_GroupLabel(entry.key));
+      for (var i = 0; i < items.length; i++) {
+        final choice = items[i];
+        rows.add(
+          _ChoiceRow(
+            icon: choice.icon,
+            label: choice.label,
+            selected: choice.id == selectedId,
+            loading: choice.id == _loadingSubtitleId,
+            onTap: () => Navigator.of(context, rootNavigator: true).pop(
+              choice,
+            ),
+          ),
+        );
+        if (i < items.length - 1) rows.add(const SDivider(indent: 16));
       }
     }
 
-    return PopScope(
-      canPop: !_anyPanelOpen,
-      onPopInvokedWithResult: (didPop, _) {
-        // System back closes any open floating panel first instead of leaving
-        // the player.
-        if (!didPop) _closeAllPanels();
-      },
-      child: ColoredBox(
-        color: AppTheme.playerSurface,
-        child: ScaffoldPage(
-          padding: EdgeInsets.zero,
-          content: Focus(
-            autofocus: true,
-            onKeyEvent: (node, event) {
-              if (event is KeyDownEvent &&
-                  event.logicalKey == LogicalKeyboardKey.escape) {
-                if (_anyPanelOpen) {
-                  _closeAllPanels();
-                } else {
-                  Navigator.of(context).pop();
-                }
-                return KeyEventResult.handled;
-              }
-              return KeyEventResult.ignored;
-            },
-            child: Stack(
-              children: [
-                body,
-                // Always-visible top bar: back button + title
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: SafeArea(
-                    bottom: false,
-                    child: _TopBar(
-                      title: widget.video.name,
-                      onClose: () => Navigator.of(context).pop(),
-                    ),
-                  ),
+    return Navigator.of(context, rootNavigator: true).push<Object?>(
+      SDialogRoute<Object?>(
+        barrierColor: context.sp.scrim,
+        builder: (ctx) => Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: SDialog(
+              title: title,
+              flushBody: true,
+              body: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 340),
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  children: rows,
                 ),
-                // Floating subtitle selection panel (overlay)
-                if (_subtitlePanelOpen && !_locked)
-                  Positioned.fill(
-                    child: Stack(
-                      children: [
-                        // Scrim — tap outside the panel to close it.
-                        Positioned.fill(
-                          child: TweenAnimationBuilder<double>(
-                            tween: Tween(begin: 0.0, end: 1.0),
-                            duration: const Duration(milliseconds: 150),
-                            curve: Curves.easeOut,
-                            builder: (context, t, child) => Opacity(
-                              opacity: AppAlpha.muted * t,
-                              child: child,
-                            ),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: _closeSubtitlePanel,
-                              child: const ColoredBox(color: Colors.black),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: 64,
-                          right: 16,
-                          child: _PanelEntrance(
-                            child: _SubtitlePanel(
-                              video: widget.video,
-                              choices: choices,
-                              selected: selectedChoice,
-                              loadingId: _loadingSubtitleId,
-                              onSelected: _applySubtitle,
-                              onCustomize: () => _showAppearanceEditor(context),
-                              onClose: _closeSubtitlePanel,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+              ),
+              actions: [
+                if (footer != null)
+                  SDialogButton(
+                    footer,
+                    onTap: () => Navigator.of(ctx).pop(_kAppearanceAction),
                   ),
-                // Floating audio track selection panel (overlay)
-                if (_audioPanelOpen && !_locked)
-                  Positioned.fill(
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: TweenAnimationBuilder<double>(
-                            tween: Tween(begin: 0.0, end: 1.0),
-                            duration: const Duration(milliseconds: 150),
-                            curve: Curves.easeOut,
-                            builder: (context, t, child) => Opacity(
-                              opacity: AppAlpha.muted * t,
-                              child: child,
-                            ),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: _closeAudioPanel,
-                              child: const ColoredBox(color: Colors.black),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: 64,
-                          right: 16,
-                          child: _PanelEntrance(
-                            child: _AudioPanel(
-                              tracks: _audioTracks,
-                              selected: _currentTrack.audio,
-                              onSelected: _applyAudioTrack,
-                              onClose: _closeAudioPanel,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                SDialogButton(
+                  'Cancel',
+                  primary: true,
+                  onTap: () => Navigator.of(ctx).pop(),
+                ),
               ],
             ),
           ),
@@ -718,95 +738,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     );
   }
 
-  bool get _anyPanelOpen => _subtitlePanelOpen || _audioPanelOpen;
-
-  /// Real audio tracks (excluding the libmpv 'auto'/'no' placeholders).
-  List<AudioTrack> get _audioTracks =>
-      _tracks.audio.where((t) => t.id != 'auto' && t.id != 'no').toList();
-
-  void _showSubtitlePicker(BuildContext context) {
-    setState(() {
-      _audioPanelOpen = false;
-      _subtitlePanelOpen = true;
-    });
-  }
-
-  void _closeSubtitlePanel() {
-    if (_subtitlePanelOpen) setState(() => _subtitlePanelOpen = false);
-  }
-
-  void _showAudioPicker(BuildContext context) {
-    setState(() {
-      _subtitlePanelOpen = false;
-      _audioPanelOpen = true;
-    });
-  }
-
-  void _closeAudioPanel() {
-    if (_audioPanelOpen) setState(() => _audioPanelOpen = false);
-  }
-
-  void _closeAllPanels() {
-    if (_anyPanelOpen) {
-      setState(() {
-        _subtitlePanelOpen = false;
-        _audioPanelOpen = false;
-      });
-    }
-  }
-
   Future<void> _applyAudioTrack(AudioTrack track) async {
     try {
       await _player.setAudioTrack(track);
-      // _trackSub updates _currentTrack and rebuilds the panel, so the
-      // checkmark moves automatically �� no manual setState needed.
-    } catch (e) {
+      // _trackSub updates _currentTrack and rebuilds, so the checkmark moves
+      // automatically — no manual setState needed.
+    } catch (_) {
       if (!mounted) return;
-      unawaited(
-        displayInfoBar(
-          context,
-          builder: (context, close) {
-            return InfoBar(
-              title: Text('Could not switch audio track: $e'),
-              severity: InfoBarSeverity.error,
-            );
-          },
-        ),
-      );
+      showSToast(context, 'Could not switch audio track', bottom: 118);
     }
-  }
-
-  /// Opens the subtitle appearance editor as a Fluent ContentDialog.
-  void _showAppearanceEditor(BuildContext context) {
-    unawaited(
-      showDialog<void>(
-        context: context,
-        builder: (ctx) => ContentDialog(
-          constraints: const BoxConstraints(maxWidth: 520),
-          title: Row(
-            children: [
-              Icon(
-                FluentIcons.font,
-                size: 20,
-                color: FluentTheme.of(ctx).accentColor.normal,
-              ),
-              const SizedBox(width: 10),
-              const Expanded(child: Text('Subtitle appearance')),
-              IconButton(
-                icon: const Icon(FluentIcons.chrome_close, size: 12),
-                onPressed: () => Navigator.of(ctx).pop(),
-              ),
-            ],
-          ),
-          content: const SubtitleStyleEditor(),
-          actions: subtitleStyleEditorActions(
-            context,
-            ref,
-            onClose: () => Navigator.of(ctx).pop(),
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -823,40 +763,45 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(4, 4, 16, 8),
+      padding: const EdgeInsets.fromLTRB(14, 6, 16, 10),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Colors.black.withValues(alpha: 0.5), Colors.transparent],
+          colors: [Colors.black.withValues(alpha: 0.55), Colors.transparent],
         ),
       ),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(FluentIcons.chrome_close, size: 14),
-            onPressed: onClose,
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                shadows: [
-                  Shadow(
-                    blurRadius: 8,
-                    color: Colors.black.withValues(alpha: 0.54),
-                  ),
-                ],
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            SBarGlyphButton(
+              icon: SGlyphs.close,
+              size: 20,
+              color: Colors.white,
+              onTap: onClose,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  shadows: [
+                    Shadow(
+                      blurRadius: 8,
+                      color: Colors.black.withValues(alpha: 0.54),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -868,6 +813,7 @@ class _TopBar extends StatelessWidget {
 
 class _SpeedBadge extends StatelessWidget {
   const _SpeedBadge({required this.speed});
+
   final double speed;
 
   @override
@@ -875,9 +821,12 @@ class _SpeedBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: AppAlpha.overlay),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+        color: Colors.black.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(SRadii.md),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.15),
+          width: SHair.xs,
+        ),
       ),
       child: Text(
         '${speed}x',
@@ -892,40 +841,12 @@ class _SpeedBadge extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Panel entrance animation
-// ---------------------------------------------------------------------------
-
-/// Entrance animation for floating panels: fade in while rising slightly.
-/// Runs once when the panel first appears.
-class _PanelEntrance extends StatelessWidget {
-  const _PanelEntrance({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      builder: (context, t, child) => Opacity(
-        opacity: t,
-        child: Transform.translate(
-          offset: Offset(0, 10 * (1 - t)),
-          child: child,
-        ),
-      ),
-      child: child,
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Lock screen overlay
 // ---------------------------------------------------------------------------
 
 class _LockScreen extends StatefulWidget {
   const _LockScreen({required this.onUnlock});
+
   final VoidCallback onUnlock;
 
   @override
@@ -963,8 +884,9 @@ class _LockScreenState extends State<_LockScreen> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: _onTap,
-      child: Container(
+      child: ColoredBox(
         color: Colors.transparent,
         child: Center(
           child: AnimatedOpacity(
@@ -974,20 +896,17 @@ class _LockScreenState extends State<_LockScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  FluentIcons.lock,
-                  size: 48,
+                  SGlyphs.lock,
+                  size: 44,
                   color: Colors.white.withValues(alpha: 0.5),
                 ),
-                const SizedBox(height: 12),
-                Button(
-                  onPressed: widget.onUnlock,
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(FluentIcons.unlock, size: 14),
-                      SizedBox(width: 8),
-                      Text('Unlock'),
-                    ],
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: 180,
+                  child: SButton(
+                    'Unlock',
+                    kind: SButtonKind.sheet,
+                    onPressed: widget.onUnlock,
                   ),
                 ),
               ],
@@ -1000,394 +919,100 @@ class _LockScreenState extends State<_LockScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Subtitle panel
+// Dialog rows
 // ---------------------------------------------------------------------------
 
-class _SubtitlePanel extends StatelessWidget {
-  const _SubtitlePanel({
-    required this.video,
-    required this.choices,
-    required this.selected,
-    required this.loadingId,
-    required this.onSelected,
-    required this.onCustomize,
-    required this.onClose,
-  });
-
-  final DriveItem video;
-  final List<_SubtitleChoice> choices;
-  final _SubtitleChoice? selected;
-  final String? loadingId;
-  final ValueChanged<_SubtitleChoice> onSelected;
-  final VoidCallback onCustomize;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-
-    // Split the flat choice list into visually grouped sections.
-    final general = <_SubtitleChoice>[];
-    final embedded = <_SubtitleChoice>[];
-    final external = <_SubtitleChoice>[];
-    for (final c in choices) {
-      if (c.id == 'off' || c.id == 'auto') {
-        general.add(c);
-      } else if (c.id.startsWith('embedded:')) {
-        embedded.add(c);
-      } else {
-        external.add(c);
-      }
-    }
-
-    Widget tile(_SubtitleChoice c) {
-      final isSelected = c.id == selected?.id;
-      return _ChoiceTile(
-        choice: c,
-        selected: isSelected,
-        loading: c.id == loadingId,
-        onTap: () => onSelected(c),
-      );
-    }
-
-    return Container(
-      width: 300,
-      constraints: const BoxConstraints(maxHeight: 420),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: AppShadow.modal,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
-            child: Row(
-              children: [
-                Icon(
-                  FluentIcons.closed_caption,
-                  size: 16,
-                  color: colors.accent,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Subtitles',
-                    style: FluentTheme.of(context).typography.bodyStrong,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(FluentIcons.chrome_close, size: 12),
-                  onPressed: onClose,
-                ),
-              ],
-            ),
-          ),
-          const Divider(),
-          // Sections
-          Flexible(
-            child: ListView(
-              shrinkWrap: true,
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-              children: [
-                if (general.isNotEmpty) ...[
-                  const _GroupLabel('State'),
-                  for (final c in general) tile(c),
-                  const SizedBox(height: 8),
-                ],
-                if (embedded.isNotEmpty) ...[
-                  const _GroupLabel('Embedded tracks'),
-                  for (final c in embedded) tile(c),
-                  const SizedBox(height: 8),
-                ],
-                if (external.isNotEmpty) ...[
-                  const _GroupLabel('External subtitles'),
-                  for (final c in external) tile(c),
-                ],
-              ],
-            ),
-          ),
-          const Divider(),
-          // Footer — appearance customization
-          HoverButton(
-            onPressed: onCustomize,
-            builder: (context, states) {
-              final hovered = states.contains(WidgetState.hovered);
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 80),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 11,
-                ),
-                decoration: BoxDecoration(
-                  color: hovered
-                      ? colors.onSurface.withValues(alpha: AppAlpha.hoverWash)
-                      : Colors.transparent,
-                  borderRadius: const BorderRadius.vertical(
-                    bottom: Radius.circular(12),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      FluentIcons.font,
-                      size: 14,
-                      color: colors.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Customize appearance',
-                        style: TextStyle(fontSize: 14, color: colors.onSurface),
-                      ),
-                    ),
-                    Icon(
-                      FluentIcons.chevron_right,
-                      size: 12,
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Small uppercase section label used to group subtitle choices.
+/// Header of a group inside the choice dialog.
 class _GroupLabel extends StatelessWidget {
   const _GroupLabel(this.label);
 
   final String label;
 
   @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
-      child: Text(
-        label.toUpperCase(),
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.9,
-          color: colors.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Container(
+    height: 28,
+    alignment: Alignment.centerLeft,
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    color: context.sp.containerMisc,
+    child: Text(
+      label,
+      style: TextStyle(fontSize: 12, color: context.sp.subtitle),
+    ),
+  );
 }
 
-class _ChoiceTile extends StatelessWidget {
-  const _ChoiceTile({
-    required this.choice,
+class _ChoiceRow extends StatelessWidget {
+  const _ChoiceRow({
+    required this.icon,
+    required this.label,
     required this.selected,
     required this.loading,
     required this.onTap,
   });
 
-  final _SubtitleChoice choice;
+  final IconData icon;
+  final String label;
   final bool selected;
   final bool loading;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.colors;
-    return HoverButton(
-      onPressed: onTap,
-      builder: (context, states) {
-        final hovered = states.contains(WidgetState.hovered);
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 100),
-          curve: Curves.easeOut,
-          margin: const EdgeInsets.symmetric(vertical: 1),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: selected
-                ? colors.accent.withValues(alpha: AppAlpha.tint)
-                : hovered
-                ? colors.onSurface.withValues(alpha: AppAlpha.hoverWash)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                choice.icon,
-                size: 14,
-                color: selected ? colors.accent : colors.onSurfaceVariant,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  choice.label,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                    color: selected ? colors.accent : colors.onSurface,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+    final p = context.sp;
+    return SPressable(
+      onTap: onTap,
+      builder: (context, pressed) => Container(
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        color: pressed ? p.dialogActionPressed : Colors.transparent,
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: selected ? p.accent : p.icon),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: pressed
+                      ? p.titleOther
+                      : (selected ? p.accent : p.title),
                 ),
               ),
-              if (loading)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: ProgressRing(strokeWidth: 2),
-                )
-              else if (selected)
-                Icon(FluentIcons.check_mark, size: 12, color: colors.accent),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Audio panel
-// ---------------------------------------------------------------------------
-
-class _AudioPanel extends StatelessWidget {
-  const _AudioPanel({
-    required this.tracks,
-    required this.selected,
-    required this.onSelected,
-    required this.onClose,
-  });
-
-  final List<AudioTrack> tracks;
-  final AudioTrack selected;
-  final ValueChanged<AudioTrack> onSelected;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    return Container(
-      width: 300,
-      constraints: const BoxConstraints(maxHeight: 420),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: AppShadow.modal,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
-            child: Row(
-              children: [
-                Icon(FluentIcons.headset, size: 16, color: colors.accent),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Audio track',
-                    style: FluentTheme.of(context).typography.bodyStrong,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(FluentIcons.chrome_close, size: 12),
-                  onPressed: onClose,
-                ),
-              ],
             ),
-          ),
-          const Divider(),
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-              itemCount: tracks.length,
-              itemBuilder: (context, index) {
-                final t = tracks[index];
-                final isSelected = t.id == selected.id;
-                return HoverButton(
-                  onPressed: () => onSelected(t),
-                  builder: (context, states) {
-                    final hovered = states.contains(WidgetState.hovered);
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 100),
-                      curve: Curves.easeOut,
-                      margin: const EdgeInsets.symmetric(vertical: 1),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? colors.accent.withValues(alpha: AppAlpha.tint)
-                            : hovered
-                            ? colors.onSurface.withValues(
-                                alpha: AppAlpha.hoverWash,
-                              )
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            FluentIcons.music_note,
-                            size: 14,
-                            color: isSelected
-                                ? colors.accent
-                                : colors.onSurfaceVariant,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              t.title ?? t.language ?? 'Track ${t.id}',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: isSelected
-                                    ? FontWeight.w600
-                                    : FontWeight.normal,
-                                color: isSelected
-                                    ? colors.accent
-                                    : colors.onSurface,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (isSelected)
-                            Icon(
-                              FluentIcons.check_mark,
-                              size: 12,
-                              color: colors.accent,
-                            ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
+            if (loading)
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: p.accent,
+                ),
+              )
+            else if (selected)
+              Icon(SGlyphs.check, size: 16, color: p.accent),
+          ],
+        ),
       ),
     );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Subtitle choices
+// Subtitle / audio choices
 // ---------------------------------------------------------------------------
 
-sealed class _SubtitleChoice {
-  const _SubtitleChoice();
+sealed class _Choice {
+  const _Choice();
   String get id;
   String get label;
   IconData get icon;
+}
+
+sealed class _SubtitleChoice extends _Choice {
+  const _SubtitleChoice();
 }
 
 class _OffChoice extends _SubtitleChoice {
@@ -1397,7 +1022,7 @@ class _OffChoice extends _SubtitleChoice {
   @override
   String get label => 'Off';
   @override
-  IconData get icon => FluentIcons.clear;
+  IconData get icon => SGlyphs.close;
 }
 
 class _AutoChoice extends _SubtitleChoice {
@@ -1407,7 +1032,7 @@ class _AutoChoice extends _SubtitleChoice {
   @override
   String get label => 'Auto';
   @override
-  IconData get icon => FluentIcons.auto_enhance_on;
+  IconData get icon => SGlyphs.sparkle;
 }
 
 class _EmbeddedChoice extends _SubtitleChoice {
@@ -1418,7 +1043,7 @@ class _EmbeddedChoice extends _SubtitleChoice {
   @override
   String get label => track.title ?? track.language ?? 'Track ${track.id}';
   @override
-  IconData get icon => FluentIcons.closed_caption;
+  IconData get icon => SGlyphs.subtitles;
 }
 
 class _ExternalChoice extends _SubtitleChoice {
@@ -1429,14 +1054,16 @@ class _ExternalChoice extends _SubtitleChoice {
   @override
   String get label => item.name;
   @override
-  IconData get icon => FluentIcons.document;
+  IconData get icon => SGlyphs.file;
 }
 
-String _formatDuration(Duration d) {
-  final h = d.inHours;
-  final m = d.inMinutes.remainder(60);
-  final s = d.inSeconds.remainder(60);
-  final mm = m.toString().padLeft(2, '0');
-  final ss = s.toString().padLeft(2, '0');
-  return h > 0 ? '$h:$mm:$ss' : '$m:$ss';
+class _AudioChoice extends _Choice {
+  const _AudioChoice({required this.track});
+  final AudioTrack track;
+  @override
+  String get id => 'audio:${track.id}';
+  @override
+  String get label => track.title ?? track.language ?? 'Track ${track.id}';
+  @override
+  IconData get icon => SGlyphs.headphones;
 }

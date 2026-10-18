@@ -1,26 +1,30 @@
 import 'dart:async';
 
-import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/theme/app_theme.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 import 'providers/auth_provider.dart';
-import 'providers/folder_provider.dart';
 import 'providers/drive_provider.dart';
+import 'providers/folder_provider.dart';
+import 'smartisan/smartisan_motion.dart';
 
 class OneDriveVideoApp extends ConsumerWidget {
   const OneDriveVideoApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return FluentApp(
+    return MaterialApp(
       title: 'OneDrive Video',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.system,
+      // Rubber-band overscroll, no Material glow; mouse dragging enabled so
+      // the desktop build scrolls like a touch screen.
+      scrollBehavior: const SmartisanScrollBehavior(desktopDrag: true),
       home: const _AuthGate(),
     );
   }

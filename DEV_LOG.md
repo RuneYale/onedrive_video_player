@@ -1,7 +1,7 @@
 # OneDrive Video Player — 开发进度日志
 
 > 这是一份"接续手册",记录当前项目状态、已完成工作、卡点、以及明天怎么接着干。
-> 最后更新:2026/7/23(第二十节修复计划 0-7 全部完成:analyze 零问题 + 67/67 测试通过;待提交 + 实跑验证)
+> 最后更新:2026/10/18(第二十一节 Smartisan OS UI 重构:fluent_ui 全部移除,锤子风格组件体系接管整站;analyze 零问题 + 89/89 测试通过 + Windows 构建跑通)
 
 ---
 
@@ -15,7 +15,7 @@
 
 ## 二、当前状态(一句话)
 
-**Riverpod 已迁移到 3.x(Notifier/build);字幕按钮已移入视频控件栏(全屏按钮旁);字幕外观可自定义(字号/颜色/背景/描边,持久化)。`flutter analyze` 零问题,`flutter test` 29/29 通过,Windows 构建跑通。**
+**整站已从 fluent_ui(WinUI)重构为 Smartisan OS(锤子/坚果)风格:页面灰底 + 白色分组卡片 + 极细描边 + 单一蓝色强调 + 分段 Tab / 真滚轮 / 右滑删除 / 卡片列表,动效走横推与底部升起。`flutter analyze` 零问题,`flutter test` 89/89 通过,Windows 构建跑通。**
 
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
@@ -746,3 +746,49 @@ D:\code\project\onedrive_video_player\
 **不做/缓做**:flutter_secure_storage(新依赖,需用户确认);Dio 401 拦截器(改动大,列后续);沉浸式状态栏、motion.dart 首屏动画优化、版本号 package_info_plus(纯打磨,列后续)。
 
 *下次接续:修复计划已全部完成。建议顺序:① 提交 19+ 个未提交文件;② Windows/Android 实跑验证(重点:续播确认环、error 页重试、手势死区、Android 亮度/音量手势);③ 缓做项按需启动:flutter_secure_storage、Dio 401 拦截器、沉浸式状态栏、motion.dart 首屏动画、package_info_plus 版本号。*
+
+---
+
+## 二十一、2026/10/18 开发记录:全项目重构为 Smartisan OS(锤子/坚果)风格
+
+**目标**:用 `smartisan-ui` skill,把 UI 从 fluent_ui(WinUI)整套换成锤子风格。
+
+**做法(按 skill 的 Flutter 路径,不从 CSS 自己翻译)**:
+
+1. skill 的 `assets/flutter/*.dart` 原样落到 `lib/smartisan/`;字形字体 `assets/fonts/smartisan_glyphs.ttf`(`SGlyphs`,166 个实心字形,Phosphor Icons / MIT),`pubspec.yaml` 注册 family `SmartisanGlyphs`。
+2. 移除 `fluent_ui` 依赖(连带自动失去 flutter_localizations / intl / math_expressions / recase / scroll_pos)。
+3. `lib/core/theme/smartisan_kit.dart` 作为唯一入口(把 kit 的 widgets / palette / component_theme / material_theme / accent 一起 export,因为 `smartisan_widgets.dart` 本身不导出 `context.sp`);`app_theme.dart` 只剩 `accent` / `light()` / `dark()` / `tabularFigures` / `playerSurface`。
+4. `app.dart` → `MaterialApp` + `SmartisanMaterialTheme.build(isDark:, accent: 锤子蓝)` + `SmartisanScrollBehavior(desktopDrag: true)`(橡皮筋回弹、无光晕、桌面可拖拽滚动)。主题已关水波纹/高亮,控制台不再有 Material 标志物。
+5. app 侧补充件(kit 没画,或只吃自己的 `SIcons` 矢量图标):
+   - `core/widgets/smartisan_extras.dart`:`SBarGlyphButton`(SGlyphs 版顶栏按钮,按住变深并弹到 1.33×)、`SGlyphBottomNav`(54dp 底栏,选中 28 / 未选 22)、`SCardList`(SListGroup 卡片外壳 + 懒加载 ListView,大目录不一次性建完)、`SCard`。
+   - `core/widgets/dialogs.dart`:`showSConfirmDialog`(危险操作用红字 + 60% 遮罩)、`SDangerDialogButton`、`showSContextMenu`(`SPopupMenu` 锚定浮层,自动夹到窗口内)。
+   - `core/widgets/video_thumb.dart`(64×36 缩略图 + 极细描边/占位字形)、`core/utils/format.dart`(时长/体积/相对时间)。
+6. 页面重写:
+   - `home_page`:底部导航(视频 / 最近 / 设置)+ `IndexedStack`;未选文件夹时是空状态 + 小按钮。
+   - `browser_page`:`SAppBar`(居中标题、返回、换文件夹/刷新/更多)+ 卡片列表 `SmartisanTile`(缩略图或文件夹字形、标题、"续播 / 体积 · 字幕数"副标题、长按清续播)。
+   - `recent_page`:卡片列表 + **向右滑露出"移除"托盘**(`SSwipeRow`,不是 iOS 左滑),2dp 进度线。
+   - `settings_page`:真机竖条纹底 + 分组卡片(账户 / 视频库 / 播放 / 关于 / 退出),退出是红字 + 红图标 + 对话框确认。
+   - `folder_picker_page`:整页从底部升起(`SModalPageRoute`),底部一颗大按钮确认,返回键先回上一层。
+   - `login_page`:蓝渐变 App 标 + 白色功能卡 + 主按钮;设备码页是凹陷码槽 + 复制按钮 + 倒计时。
+   - `player_page`:浮层暗色控件(白色 21dp 图标、按住弹性)、自绘进度条(4dp 槽 + 蓝填充 + 16dp 白钮)、白色音量卡(锚在控制条上,不会跑出屏幕)、字幕 / 音轨选择改用 `SDialog` 列表、倍速改底部滚轮面板、字幕外观改整页编辑器。
+7. 交互细节:Esc 退出播放器;选择面板改成路由后系统返回自动生效(删掉 `_anyPanelOpen` / `_PanelEntrance`)。
+
+**对 skill 组件的三处本地修补**(都在 `lib/smartisan/`,可跟随上游):
+- `SAppBar` 标题加 `maxLines: 1` + ellipsis(长文件名不出 48dp 栏)。
+- `SPopupMenu` 菜单项改 `Expanded` + ellipsis(长英文菜单项不溢出)。
+- 4 处 fire-and-forget 的 `HapticFeedback` / 动画 future 包 `unawaited`(本项目开了 `discarded_futures`)。
+
+**验证**:
+- `flutter analyze` → **No issues found**。
+- `flutter test` → **89/89**:原有单测 + 新增 `test/ui_smoke_test.dart`(登录页 / 三 Tab 外壳 / 字幕外观页在 432×900 与 1280×800 下的布局;长标题省略;任何 RenderFlex overflow 都会让用例失败)。
+- `flutter build windows --debug` → 成功。
+- 离屏 golden 渲染了 12 张对照图(临时测试已删):登录(亮/暗)、空状态、设置、字幕外观、列表(亮/暗/缩略图)、危险对话框、Toast、右上角菜单。
+  ⚠️ 已知现象:被 `SText` 替换 `DefaultTextStyle` 的组件(对话框正文、Toast 文字、滚轮)在**测试环境**会用 Ahem 方块字体(`fontFamily` 为 null → 引擎默认字体;测试里默认字体是 Ahem),真机/桌面正常,不是样式 bug。
+
+**遗留**:
+- 播放器浮层无单测(media_kit 需真机),建议实跑过一遍:进度条拖动 / 音量卡 / 字幕与音轨对话框 / 倍速滚轮 / 锁屏 / 手势层死区。
+- Android 未实跑;深色模式沿用 kit 推导的暗色板(Smartisan 官方无暗色,以 skill 的适配说明为准)。
+- `core/widgets/motion.dart`(`FadeSlideIn`)已删除:交错淡入与锤子"瞬时按下、不做淡入"的调性冲突,列表改为直接出现。
+- `pubspec.yaml` 的 `assets:` 里没有多余资源,字体只走 `fonts:` 段。
+
+*下次接续:① Windows 实跑走一遍播放器与滑动手势(上面"遗留"清单);② Android 构建 + 真机过一遍(字形字体、底部安全区);③ 三处 kit 补丁若上游更新需要重新打;④ Smartisan UI Kit 为 CC BY 4.0(作者 Paix Chan),对外发布时保留 README 里的署名。*

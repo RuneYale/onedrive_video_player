@@ -1,8 +1,10 @@
-import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
+import '../theme/smartisan_kit.dart';
 
-/// A friendly, consistent "empty" placeholder used across list screens.
+/// Centred blank state, styled like the kit's [SEmptyState] (pale 96dp glyph,
+/// bold grey title, lighter hint, optional action) but driven by the solid
+/// glyph font instead of the kit's vector icon set.
 class EmptyState extends StatelessWidget {
   const EmptyState({
     super.key,
@@ -21,34 +23,48 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.colors;
-    final typography = FluentTheme.of(context).typography;
+    final p = context.sp;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.symmetric(horizontal: 60, vertical: 40),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _IconBadge(icon: icon, color: colors.accent),
-            const SizedBox(height: 20),
+            SizedBox.square(
+              dimension: 120,
+              child: Center(
+                child: Icon(icon, size: 96, color: const Color(0xFFD6D6D6)),
+              ),
+            ),
+            const SizedBox(height: 18),
             Text(
               title,
-              style: typography.bodyStrong?.copyWith(fontSize: 16),
               textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: p.disabled,
+              ),
             ),
             if (message != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 5),
               Text(
                 message!,
-                style: typography.body?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
                 textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: Color(0xFFC8C8C8)),
               ),
             ],
             if (actionLabel != null && onAction != null) ...[
               const SizedBox(height: 24),
-              Button(onPressed: onAction, child: Text(actionLabel!)),
+              // IntrinsicWidth keeps the 30dp button a pill: inside a Column
+              // an aligned Container would otherwise stretch to full width.
+              IntrinsicWidth(
+                child: SButton(
+                  actionLabel!,
+                  kind: SButtonKind.small,
+                  onPressed: onAction,
+                ),
+              ),
             ],
           ],
         ),
@@ -57,7 +73,7 @@ class EmptyState extends StatelessWidget {
   }
 }
 
-/// A consistent error placeholder with an optional retry action.
+/// Error placeholder: same layout, a warning glyph and a retry action.
 class ErrorState extends StatelessWidget {
   const ErrorState({super.key, required this.message, this.onRetry});
 
@@ -65,87 +81,43 @@ class ErrorState extends StatelessWidget {
   final VoidCallback? onRetry;
 
   @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    final typography = FluentTheme.of(context).typography;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _IconBadge(icon: FluentIcons.error_badge, color: colors.error),
-            const SizedBox(height: 20),
-            Text(
-              'Something went wrong',
-              style: typography.bodyStrong?.copyWith(fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              style: typography.body?.copyWith(color: colors.onSurfaceVariant),
-              textAlign: TextAlign.center,
-            ),
-            if (onRetry != null) ...[
-              const SizedBox(height: 24),
-              FilledButton(onPressed: onRetry, child: const Text('Try again')),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => EmptyState(
+    icon: SGlyphs.warningCircle,
+    title: 'Something went wrong',
+    message: message,
+    actionLabel: onRetry != null ? 'Try again' : null,
+    onAction: onRetry,
+  );
 }
 
-/// A compact, calm loading placeholder with an optional label.
+/// Calm loading placeholder: the accent arc and an optional grey label.
 class LoadingState extends StatelessWidget {
   const LoadingState({super.key, this.label});
 
   final String? label;
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(
-            width: 28,
-            height: 28,
-            child: ProgressRing(strokeWidth: 2.5),
+  Widget build(BuildContext context) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: context.sp.accent,
+            backgroundColor: context.sp.divider,
           ),
-          if (label != null) ...[
-            const SizedBox(height: 16),
-            Text(
-              label!,
-              style: FluentTheme.of(context).typography.body
-                  ?.copyWith(color: context.colors.onSurfaceVariant),
-            ),
-          ],
+        ),
+        if (label != null) ...[
+          const SizedBox(height: 16),
+          Text(
+            label!,
+            style: TextStyle(fontSize: 12, color: context.sp.subtitle),
+          ),
         ],
-      ),
-    );
-  }
-}
-
-/// A circular tinted icon container used by [EmptyState] and [ErrorState].
-class _IconBadge extends StatelessWidget {
-  const _IconBadge({required this.icon, required this.color});
-
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 64,
-      height: 64,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: AppAlpha.tint),
-        shape: BoxShape.circle,
-      ),
-      alignment: Alignment.center,
-      child: Icon(icon, size: 30, color: color),
-    );
-  }
+      ],
+    ),
+  );
 }

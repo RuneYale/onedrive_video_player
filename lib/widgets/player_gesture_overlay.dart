@@ -1,11 +1,14 @@
 import 'dart:async';
-import 'package:fluent_ui/fluent_ui.dart';
+
+import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
+
+import '../core/theme/smartisan_kit.dart' show SGlyphs;
 
 /// A transparent gesture layer placed on top of the [Video] widget.
 ///
-/// Implements Yamby-style touch gestures:
-/// * **Horizontal drag** — seek forward/backward. A preview overlay shows the
+/// Implements touch gestures:
+/// * **Horizontal drag** — seek forward/backward. A preview card shows the
 ///   target position and the delta; the actual [Player.seek] is called on drag
 ///   end to avoid excess seeking.
 /// * **Left-side vertical drag** — adjust screen brightness.
@@ -13,10 +16,9 @@ import 'package:media_kit/media_kit.dart';
 ///
 /// Only drag gestures are claimed; taps fall through to the underlying
 /// [Video] controls so play/pause, subtitle, speed, and fullscreen buttons
-/// remain clickable. We achieve this by using separate
+/// remain clickable. That is why there are separate
 /// `onHorizontalDragUpdate` / `onVerticalDragUpdate` callbacks (Flutter only
-/// claims a gesture once the drag axis is resolved) and by NOT setting
-/// `onTap` — tap events simply pass through to widgets below us.
+/// claims a gesture once the drag axis is resolved) and no `onTap`.
 class PlayerGestureOverlay extends StatefulWidget {
   const PlayerGestureOverlay({
     super.key,
@@ -29,10 +31,10 @@ class PlayerGestureOverlay extends StatefulWidget {
   final Player player;
 
   /// Abstraction over platform brightness so the overlay is testable without
-  /// a real screen.  When null, brightness gestures are disabled.
+  /// a real screen. When null, brightness gestures are disabled.
   final BrightnessHelper? brightnessHelper;
 
-  /// Abstraction over system volume.  When null, volume gestures are disabled.
+  /// Abstraction over system volume. When null, volume gestures are disabled.
   final VolumeHelper? volumeHelper;
 
   final bool enabled;
@@ -117,8 +119,7 @@ class _PlayerGestureOverlayState extends State<PlayerGestureOverlay> {
     if (!widget.enabled || _inBottomControlsZone(d.localPosition.dy)) return;
     _start = d.globalPosition;
     final w = MediaQuery.of(context).size.width;
-    if (d.globalPosition.dx < w / 2 &&
-        widget.brightnessHelper != null) {
+    if (d.globalPosition.dx < w / 2 && widget.brightnessHelper != null) {
       _gesture = _GestureType.brightness;
     } else if (widget.volumeHelper != null) {
       _gesture = _GestureType.volume;
@@ -186,16 +187,14 @@ class _PlayerGestureOverlayState extends State<PlayerGestureOverlay> {
     return GestureDetector(
       // translucent so taps pass through to the Video controls below
       behavior: HitTestBehavior.translucent,
-      // Use separate horizontal/vertical drag recognizers so that:
-      // 1) Only true drags are claimed (taps fall through to Video controls)
-      // 2) Flutter's arena resolves horiz vs vert cleanly
+      // Separate horizontal/vertical recognizers so only true drags are
+      // claimed and taps fall through to the Video controls.
       onHorizontalDragStart: _onHorizontalDragStart,
       onHorizontalDragUpdate: _onHorizontalDragUpdate,
       onHorizontalDragEnd: _onDragEnd,
       onVerticalDragStart: _onVerticalDragStart,
       onVerticalDragUpdate: _onVerticalDragUpdate,
       onVerticalDragEnd: _onDragEnd,
-      // Deliberately NO onTap — let taps reach the Video controls
       child: Stack(
         children: [
           if (_gesture == _GestureType.seek && _seekPreview != null)
@@ -254,7 +253,7 @@ class _SeekPreview extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -263,9 +262,7 @@ class _SeekPreview extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                isForward
-                    ? FluentIcons.fast_forward
-                    : FluentIcons.rewind,
+                isForward ? SGlyphs.fastForward : SGlyphs.rewind,
                 color: Colors.white,
                 size: 18,
               ),
@@ -298,34 +295,35 @@ class _SeekPreview extends StatelessWidget {
 
 class _GestureIndicator extends StatelessWidget {
   const _GestureIndicator({required this.kind, required this.value});
+
   final _GestureIndicatorKind kind;
   final double value;
 
   @override
   Widget build(BuildContext context) {
     final icon = switch (kind) {
-      _GestureIndicatorKind.brightness => FluentIcons.brightness,
-      _GestureIndicatorKind.volume => FluentIcons.volume3,
+      _GestureIndicatorKind.brightness => SGlyphs.sun,
+      _GestureIndicatorKind.volume => SGlyphs.volume,
     };
     return Container(
-      width: 72,
-      height: 72,
+      width: 76,
+      height: 76,
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: Colors.white, size: 24),
-          const SizedBox(height: 4),
+          Icon(icon, color: Colors.white, size: 22),
+          const SizedBox(height: 6),
           SizedBox(
-            width: 40,
-            height: 40,
-            child: ProgressRing(
-              value: value * 100,
+            width: 30,
+            height: 30,
+            child: CircularProgressIndicator(
+              value: value,
               strokeWidth: 3,
-              activeColor: Colors.white,
+              color: Colors.white,
               backgroundColor: Colors.white.withValues(alpha: 0.3),
             ),
           ),

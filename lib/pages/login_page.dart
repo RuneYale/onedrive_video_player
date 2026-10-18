@@ -1,12 +1,14 @@
 import 'dart:async';
 
-import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/services/auth_service.dart';
 import '../core/theme/app_theme.dart';
+import '../core/theme/smartisan_kit.dart';
+import '../core/widgets/smartisan_extras.dart';
 import '../core/widgets/states.dart';
 import '../providers/auth_provider.dart';
 
@@ -18,12 +20,13 @@ class LoginPage extends ConsumerWidget {
     final auth = ref.watch(authProvider);
     final notifier = ref.read(authProvider.notifier);
 
-    return ScaffoldPage(
-      content: SafeArea(
+    return Scaffold(
+      backgroundColor: context.sp.page,
+      body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 480),
+              constraints: const BoxConstraints(maxWidth: 432),
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: switch (auth) {
@@ -54,90 +57,104 @@ class LoginPage extends ConsumerWidget {
 
 class _SignInView extends StatelessWidget {
   const _SignInView({required this.onSignIn});
+
   final VoidCallback onSignIn;
+
+  static const _features = <(IconData, String)>[
+    (SGlyphs.cloud, 'Stream directly from OneDrive'),
+    (SGlyphs.history, 'Resume where you left off'),
+    (SGlyphs.subtitles, 'External subtitle support'),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.colors;
-    final typography = FluentTheme.of(context).typography;
-    final features = <(IconData, String)>[
-      (FluentIcons.cloud, 'Stream directly from OneDrive'),
-      (FluentIcons.history, 'Resume where you left off'),
-      (FluentIcons.closed_caption, 'External subtitle support'),
-    ];
+    final p = context.sp;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 96,
-          height: 96,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                colors.accent,
-                colors.accent.withValues(alpha: AppAlpha.soft),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: AppShadow.glow(colors.accent),
-          ),
-          child: const Icon(
-            FluentIcons.play_solid,
-            color: Colors.white,
-            size: 44,
-          ),
-        ),
-        const SizedBox(height: 24),
+        const _AppMark(),
+        const SizedBox(height: 18),
         Text(
           'OneDrive Video',
-          style: typography.titleLarge,
           textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: p.titleOther,
+          ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Text(
           'Stream the videos stored in your OneDrive — sign in to browse and play.',
           textAlign: TextAlign.center,
-          style: typography.body?.copyWith(
-            color: colors.onSurfaceVariant,
-            height: 1.5,
+          style: TextStyle(fontSize: 14, height: 1.5, color: p.body),
+        ),
+        const SizedBox(height: 24),
+        SCard(
+          maxWidth: 432,
+          child: Column(
+            children: [
+              for (var i = 0; i < _features.length; i++) ...[
+                if (i > 0) const SDivider(),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 13,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(_features[i].$1, size: 20, color: p.accent),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          _features[i].$2,
+                          style: TextStyle(fontSize: 14, color: p.title),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
         const SizedBox(height: 24),
-        for (final f in features)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Icon(f.$1, size: 20, color: colors.accent),
-                const SizedBox(width: 12),
-                Expanded(child: Text(f.$2, style: typography.body)),
-              ],
-            ),
-          ),
-        const SizedBox(height: 32),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: onSignIn,
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(FluentIcons.signin, size: 18),
-                SizedBox(width: 8),
-                Text('Sign in with Microsoft'),
-              ],
-            ),
-          ),
-        ),
+        SButton('Sign in with Microsoft', onPressed: onSignIn),
       ],
+    );
+  }
+}
+
+/// The app mark: a beveled Smartisan-blue tile with the kit's play glyph.
+class _AppMark extends StatelessWidget {
+  const _AppMark();
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.sp;
+    return Container(
+      width: 76,
+      height: 76,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        gradient: p.primary,
+        borderRadius: BorderRadius.circular(SRadii.sheet),
+        border: Border.all(color: p.accentBorder, width: SHair.md),
+        boxShadow: p.buttonShadow,
+      ),
+      // A filled triangle's visual centre sits left of its bounding box, so
+      // nudge the glyph a hair to the right.
+      child: const Padding(
+        padding: EdgeInsets.only(left: 3),
+        child: Icon(SGlyphs.play, size: 34, color: Colors.white),
+      ),
     );
   }
 }
 
 class _DeviceCodeView extends StatefulWidget {
   const _DeviceCodeView({required this.deviceCode, required this.onCancel});
+
   final DeviceCodeResponse deviceCode;
   final VoidCallback onCancel;
 
@@ -187,183 +204,195 @@ class _DeviceCodeViewState extends State<_DeviceCodeView> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.colors;
-    final typography = FluentTheme.of(context).typography;
+    final p = context.sp;
     final dc = widget.deviceCode;
     return Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Sign in to Microsoft', style: typography.subtitle),
-        const SizedBox(height: 8),
+        Text(
+          'Sign in to Microsoft',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: p.titleOther,
+          ),
+        ),
+        const SizedBox(height: 6),
         Text(
           'Enter this code on any device to securely sign in.',
           textAlign: TextAlign.center,
-          style: typography.body?.copyWith(color: colors.onSurfaceVariant),
+          style: TextStyle(fontSize: 14, height: 1.5, color: p.body),
         ),
-        const SizedBox(height: 24),
-        _Step(
-          index: 1,
-          text: 'Open',
-          trailing: HyperlinkButton(
-            onPressed: () => launchUrl(Uri.parse(dc.verificationUri)),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+        const SizedBox(height: 20),
+        SCard(
+          maxWidth: 432,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(dc.verificationUri),
-                const SizedBox(width: 6),
-                const Icon(FluentIcons.open_in_new_window, size: 14),
+                _Step(
+                  index: 1,
+                  text: 'Open the sign-in page',
+                  trailing: SButton(
+                    'Open',
+                    kind: SButtonKind.small,
+                    expand: false,
+                    onPressed: () =>
+                        unawaited(launchUrl(Uri.parse(dc.verificationUri))),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 34, top: 6),
+                  child: Text(
+                    dc.verificationUri,
+                    style: TextStyle(fontSize: 12, color: p.subtitle),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const _Step(index: 2, text: 'Enter this code'),
+                const SizedBox(height: 10),
+                _CodeWell(
+                  code: dc.userCode,
+                  copied: _copied,
+                  onCopy: _copy,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(SGlyphs.timer, size: 14, color: p.subtitleOther),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Code expires in $_remainingLabel',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: p.subtitle,
+                        fontFeatures: AppTheme.tabularFigures,
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
         ),
         const SizedBox(height: 16),
-        const _Step(
-          index: 2,
-          text: 'Enter this code',
-          trailing: SizedBox.shrink(),
-        ),
-        const SizedBox(height: 10),
-        _CodeBox(code: dc.userCode, copied: _copied, onCopy: _copy),
-        const SizedBox(height: 12),
         Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(FluentIcons.timer, size: 15, color: colors.onSurfaceVariant),
-            const SizedBox(width: 6),
-            Text(
-              'Code expires in $_remainingLabel',
-              style: TextStyle(
-                color: colors.onSurfaceVariant,
-                fontFeatures: AppTheme.tabularFigures,
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: p.accent,
+                backgroundColor: p.divider,
               ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              'Waiting for you to sign in…',
+              style: TextStyle(fontSize: 12, color: p.subtitle),
             ),
           ],
         ),
-        const SizedBox(height: 24),
-        const _WaitingRow(),
-        const SizedBox(height: 24),
-        HyperlinkButton(
-          onPressed: widget.onCancel,
-          child: const Text('Cancel'),
-        ),
+        const SizedBox(height: 20),
+        SButton('Cancel', kind: SButtonKind.sheet, onPressed: widget.onCancel),
       ],
     );
   }
 }
 
 class _Step extends StatelessWidget {
-  const _Step({
-    required this.index,
-    required this.text,
-    required this.trailing,
-  });
+  const _Step({required this.index, required this.text, this.trailing});
+
   final int index;
   final String text;
-  final Widget trailing;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.colors;
+    final p = context.sp;
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Container(
-          width: 26,
-          height: 26,
-          decoration: BoxDecoration(
-            color: colors.accent.withValues(alpha: AppAlpha.tint),
-            shape: BoxShape.circle,
-          ),
+          width: 24,
+          height: 24,
           alignment: Alignment.center,
+          decoration: BoxDecoration(shape: BoxShape.circle, color: p.blue100),
           child: Text(
             '$index',
             style: TextStyle(
-              color: colors.accent,
-              fontWeight: FontWeight.w700,
               fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: p.accent,
             ),
           ),
         ),
-        const SizedBox(width: 12),
-        Text(text, style: FluentTheme.of(context).typography.bodyStrong),
         const SizedBox(width: 10),
         Expanded(
-          child: Align(alignment: Alignment.centerLeft, child: trailing),
+          child: Text(
+            text,
+            style: TextStyle(fontSize: 16, color: p.title),
+          ),
         ),
+        ?trailing,
       ],
     );
   }
 }
 
-class _CodeBox extends StatelessWidget {
-  const _CodeBox({
+class _CodeWell extends StatelessWidget {
+  const _CodeWell({
     required this.code,
     required this.copied,
     required this.onCopy,
   });
+
   final String code;
   final bool copied;
   final VoidCallback onCopy;
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.colors;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colors.outline),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SelectableText(
-            code,
-            style: TextStyle(
-              fontSize: 34,
-              letterSpacing: 6,
-              fontWeight: FontWeight.w700,
-              fontFeatures: AppTheme.tabularFigures,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Tooltip(
-            message: copied ? 'Copied' : 'Copy',
-            child: IconButton(
-              onPressed: onCopy,
-              icon: Icon(
-                copied ? FluentIcons.check_mark : FluentIcons.copy,
-                color: copied ? colors.accent : colors.onSurfaceVariant,
+    final p = context.sp;
+    final radius = BorderRadius.circular(SRadii.md);
+    return SInsetShadow(
+      shadows: p.insetWellShadow,
+      borderRadius: radius,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(18, 14, 8, 14),
+        decoration: BoxDecoration(
+          color: p.card,
+          borderRadius: radius,
+          border: Border.all(color: p.border, width: SHair.md),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: SelectableText(
+                code,
+                style: TextStyle(
+                  fontSize: 30,
+                  letterSpacing: 5,
+                  fontWeight: FontWeight.w700,
+                  color: p.title,
+                  fontFeatures: AppTheme.tabularFigures,
+                ),
               ),
             ),
-          ),
-        ],
+            SBarGlyphButton(
+              icon: copied ? SGlyphs.check : SGlyphs.copy,
+              size: 20,
+              color: copied ? p.accent : p.icon,
+              onTap: onCopy,
+            ),
+          ],
+        ),
       ),
-    );
-  }
-}
-
-class _WaitingRow extends StatelessWidget {
-  const _WaitingRow();
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 18,
-          height: 18,
-          child: ProgressRing(strokeWidth: 2, activeColor: colors.accent),
-        ),
-        const SizedBox(width: 12),
-        Text(
-          'Waiting for you to sign in…',
-          style: TextStyle(color: colors.onSurfaceVariant),
-        ),
-      ],
     );
   }
 }

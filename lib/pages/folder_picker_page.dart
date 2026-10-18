@@ -1,16 +1,19 @@
 import 'dart:async';
 
-import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models/drive_item.dart';
-import '../core/theme/app_theme.dart';
+import '../core/theme/smartisan_kit.dart';
+import '../core/widgets/smartisan_extras.dart';
 import '../core/widgets/states.dart';
 import '../providers/drive_provider.dart';
 import '../providers/folder_provider.dart';
 
-/// Lets the user browse their OneDrive folder tree and pick a folder to use
-/// as the video library root. Only folders are shown (files are hidden).
+/// Browses the OneDrive folder tree and picks the video-library root.
+///
+/// Presented as a full-screen page that rises from the bottom: a picker is a
+/// modal task, so it doesn't use the drill-down push. Only folders are shown.
 class FolderPickerPage extends ConsumerStatefulWidget {
   const FolderPickerPage({super.key});
 
@@ -23,6 +26,8 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
   List<DriveItem> _items = const [];
   bool _loading = true;
   String? _error;
+
+  bool get _canGoBack => _stack.length > 1;
 
   @override
   void initState() {
@@ -39,21 +44,17 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
     try {
       final graph = ref.read(graphServiceProvider);
       final items = await graph.listChildren(_stack.last.id);
-      // Only show folders
-      final folders = items.where((i) => i.isFolder).toList();
-      if (mounted) {
-        setState(() {
-          _items = folders;
-          _loading = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _items = items.where((i) => i.isFolder).toList();
+        _loading = false;
+      });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loading = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
     }
   }
 
@@ -63,170 +64,81 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
   }
 
   void _goBack() {
-    if (_stack.length > 1) {
-      _stack.removeLast();
-      unawaited(_load());
-    }
+    if (!_canGoBack) return;
+    _stack.removeLast();
+    unawaited(_load());
   }
 
-  void _confirm() {
+  Future<void> _confirm() async {
     final folder = _stack.last;
-    unawaited(
-      ref
-          .read(folderProvider.notifier)
-          .select(SelectedFolder(id: folder.id, name: folder.name)),
-    );
-    unawaited(
-      ref
-          .read(driveProvider.notifier)
-          .setRoot(DriveFolder(folder.id, folder.name)),
-    );
-    // InfoBar is shown from the page below after pop so it isn't clipped by
-    // the route transition.
-    Navigator.of(context).pop();
-    unawaited(
-      displayInfoBar(
-        context,
-        builder: (context, close) {
-          return InfoBar(
-            title: Text('"${folder.name}" set as your video folder'),
-            severity: InfoBarSeverity.success,
-          );
-        },
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    await ref
+        .read(folderProvider.notifier)
+        .select(SelectedFolder(id: folder.id, name: folder.name));
+    await ref
+        .read(driveProvider.notifier)
+        .setRoot(DriveFolder(folder.id, folder.name));
+    if (!mounted) return;
+    // The caller shows the toast so it lands on a live overlay.
+    Navigator.of(context).pop(true);
   }
 
   @override
-  Widget build(BuildContext context) {
-    final canGoBack = _stack.length > 1;
-
-    return PopScope(
-      // System back goes up one folder first instead of leaving the picker.
-      canPop: !canGoBack,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _goBack();
-      },
-      child: ScaffoldPage(
-        header: PageHeader(
-          leading: canGoBack
-              ? Tooltip(
-                  message: 'Up one folder',
-                  child: IconButton(
-                    icon: const Icon(FluentIcons.back, size: 16),
-                    onPressed: _goBack,
-                  ),
-                )
-              : null,
-          title: Text(_stack.last.name),
-          commandBar: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Tooltip(
-                message: 'Use this folder',
-                child: IconButton(
-                  icon: const Icon(FluentIcons.check_mark, size: 16),
-                  onPressed: _confirm,
-                ),
-              ),
-              Tooltip(
-                message: 'Cancel',
-                child: IconButton(
-                  icon: const Icon(FluentIcons.chrome_close, size: 14),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ),
-            ],
+  Widget build(BuildContext context) => PopScope(
+    // System back goes up one folder first instead of leaving the picker.
+    canPop: !_canGoBack,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop) _goBack();
+    },
+    child: Scaffold(
+      backgroundColor: context.sp.page,
+      body: Column(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: SAppBar(
+              title: _stack.last.name,
+              onBack: () => _canGoBack
+                  ? _goBack()
+                  : Navigator.of(context).maybePop(),
+            ),
           ),
-        ),
-        content: _buildBody(),
+          Expanded(child: _body()),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              child: SButton('Use this folder', onPressed: _confirm),
+            ),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
 
-  Widget _buildBody() {
-    if (_loading) {
-      return const LoadingState(label: 'Loading folders…');
-    }
-    if (_error != null) {
-      return ErrorState(message: _error!, onRetry: _load);
-    }
+  Widget _body() {
+    if (_loading) return const LoadingState(label: 'Loading folders…');
+    if (_error != null) return ErrorState(message: _error!, onRetry: _load);
     if (_items.isEmpty) {
       return EmptyState(
-        icon: FluentIcons.folder_open,
+        icon: SGlyphs.folder,
         title: 'No folders here',
         message:
-            'This folder has no sub-folders. Pick another one or use '
-            'this folder as your video library.',
+            'This folder has no sub-folders. Pick another one, or use this '
+            'folder as your video library.',
         actionLabel: 'Use this folder',
         onAction: _confirm,
       );
     }
-
-    return Column(
-      children: [
-        // "Use this folder" banner
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-          child: SizedBox(
-            width: double.infinity,
-            child: Button(
-              onPressed: _confirm,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(FluentIcons.video, size: 16),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      "Use '${_stack.last.name}' as video folder",
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-            itemCount: _items.length,
-            itemBuilder: (context, index) {
-              final item = _items[index];
-              final colors = context.colors;
-              return Card(
-                margin: const EdgeInsets.symmetric(vertical: 3),
-                padding: EdgeInsetsDirectional.zero,
-                child: ListTile(
-                  onPressed: () => _openFolder(item),
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: colors.accent.withValues(alpha: AppAlpha.tint),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    alignment: Alignment.center,
-                    child: Icon(
-                      FluentIcons.folder_fill,
-                      size: 20,
-                      color: colors.accent,
-                    ),
-                  ),
-                  title: Text(
-                    item.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: const Icon(FluentIcons.chevron_right, size: 12),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+    return SCardList(
+      itemCount: _items.length,
+      itemBuilder: (context, index) {
+        final item = _items[index];
+        return SmartisanTile(
+          leading: const Icon(SGlyphs.folder),
+          title: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          onTap: () => _openFolder(item),
+        );
+      },
     );
   }
 }

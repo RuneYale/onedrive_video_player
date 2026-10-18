@@ -1,16 +1,18 @@
 import 'dart:async';
 
-import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/theme/app_theme.dart';
+import '../core/theme/smartisan_kit.dart';
+import '../core/widgets/dialogs.dart';
 import '../providers/auth_provider.dart';
 import '../providers/drive_provider.dart';
 import '../providers/folder_provider.dart';
+import '../widgets/subtitle_style_editor.dart';
 import 'folder_picker_page.dart';
 
-/// Settings tab: account info, video folder, subtitle style shortcut,
-/// and sign out.
+/// Settings tab: account, video library, subtitle appearance and sign out —
+/// grouped white cards on the real-device pinstripe background.
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
 
@@ -18,7 +20,6 @@ class SettingsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authProvider);
     final folder = ref.watch(folderProvider);
-    final colors = context.colors;
 
     final displayName = switch (auth) {
       Authenticated(:final displayName) => displayName,
@@ -29,157 +30,174 @@ class SettingsPage extends ConsumerWidget {
       _ => null,
     };
 
-    return ScaffoldPage(
-      header: const PageHeader(title: Text('Settings')),
-      content: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        children: [
-          const _SectionLabel('Account'),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: colors.accent.withValues(alpha: AppAlpha.tint),
-                      shape: BoxShape.circle,
+    return Column(
+      children: [
+        SafeArea(bottom: false, child: const SAppBar(title: 'Settings')),
+        Expanded(
+          child: SmartisanPinstripe(
+            child: ListView(
+              padding: const EdgeInsets.only(top: 12, bottom: 30),
+              children: [
+                SmartisanListSection(
+                  header: 'Account',
+                  children: [
+                    _AccountRow(
+                      displayName: displayName,
+                      email: email,
                     ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      (displayName?.isNotEmpty == true)
-                          ? displayName![0].toUpperCase()
-                          : '?',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: colors.accent,
+                  ],
+                ),
+                const SizedBox(height: 14),
+                SmartisanListSection(
+                  header: 'Video library',
+                  children: [
+                    SmartisanTile(
+                      leading: const Icon(SGlyphs.folder),
+                      title: const Text('Video folder'),
+                      // The folder name goes on its own line so a long
+                      // OneDrive path ellipsizes instead of overflowing.
+                      subtitle: Text(
+                        folder?.name ?? 'Not selected',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onTap: () => unawaited(_changeFolder(context, ref)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                SmartisanListSection(
+                  header: 'Playback',
+                  children: [
+                    SmartisanTile(
+                      leading: const Icon(SGlyphs.textSize),
+                      title: const Text('Subtitle appearance'),
+                      onTap: () => unawaited(
+                        Navigator.of(context).push<void>(
+                          SModalPageRoute<void>(
+                            builder: (_) => const SubtitleStyleEditorPage(),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          displayName ?? 'Signed in',
-                          style: FluentTheme.of(context).typography.bodyStrong,
-                        ),
-                        if (email != null)
-                          Text(
-                            email,
-                            style: TextStyle(
-                              color: colors.onSurfaceVariant,
-                              fontSize: 12,
-                            ),
-                          ),
-                      ],
+                  ],
+                ),
+                const SizedBox(height: 14),
+                SmartisanListSection(
+                  header: 'About',
+                  children: const [
+                    SmartisanTile(
+                      leading: Icon(SGlyphs.info),
+                      title: Text('OneDrive Video Player'),
+                      detail: 'v1.0.0',
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                SmartisanListSection(
+                  children: [
+                    SmartisanTile(
+                      leading: Icon(SGlyphs.signOut, color: context.sp.red),
+                      title: Text(
+                        'Sign out',
+                        style: TextStyle(color: context.sp.red),
+                      ),
+                      showChevron: false,
+                      onTap: () => unawaited(_confirmSignOut(context, ref)),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
-          const _SectionLabel('Video library'),
-          Card(
-            padding: EdgeInsetsDirectional.zero,
-            child: ListTile(
-              leading: Icon(FluentIcons.folder_fill, color: colors.accent),
-              title: const Text('Video folder'),
-              subtitle: Text(folder?.name ?? 'Not selected'),
-              trailing: const Icon(FluentIcons.chevron_right, size: 12),
-              onPressed: () => _changeFolder(context),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const _SectionLabel('About'),
-          Card(
-            padding: EdgeInsetsDirectional.zero,
-            child: ListTile(
-              leading: Icon(FluentIcons.info, color: colors.onSurfaceVariant),
-              title: const Text('OneDrive Video Player'),
-              subtitle: const Text('v1.0.0'),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Center(
-            child: Button(
-              onPressed: () => _confirmSignOut(context, ref),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(FluentIcons.sign_out, size: 16, color: colors.error),
-                  const SizedBox(width: 8),
-                  Text('Sign out', style: TextStyle(color: colors.error)),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  void _changeFolder(BuildContext context) {
-    unawaited(
-      Navigator.of(
-        context,
-      ).push(FluentPageRoute<void>(builder: (_) => const FolderPickerPage())),
+  Future<void> _changeFolder(BuildContext context, WidgetRef ref) async {
+    final picked = await Navigator.of(context).push<bool>(
+      SModalPageRoute<bool>(builder: (_) => const FolderPickerPage()),
     );
+    if (picked == true && context.mounted) {
+      showSToast(context, 'Video folder updated');
+    }
   }
 
   Future<void> _confirmSignOut(BuildContext context, WidgetRef ref) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => ContentDialog(
-        title: const Text('Sign out?'),
-        content: const Text(
-          'You will need to sign in again to browse your OneDrive videos.',
-        ),
-        actions: [
-          Button(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: AppTheme.destructiveConfirm(ctx),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Sign out'),
-          ),
-        ],
-      ),
+    final confirmed = await showSConfirmDialog(
+      context,
+      title: 'Sign out?',
+      message: 'You will need to sign in again to browse your OneDrive videos.',
+      confirmLabel: 'Sign out',
+      destructive: true,
     );
-    if (confirmed == true) {
-      // Await both so the folder choice and tokens are fully cleared before
-      // the auth gate rebuilds into the signed-out state.
-      await ref.read(folderProvider.notifier).clear();
-      await ref.read(authProvider.notifier).signOut();
-      // Drop any cached drive state from the previous account.
-      ref.invalidate(driveProvider);
-    }
+    if (!confirmed) return;
+    // Await both so the folder choice and tokens are fully cleared before the
+    // auth gate rebuilds into the signed-out state.
+    await ref.read(folderProvider.notifier).clear();
+    await ref.read(authProvider.notifier).signOut();
+    // Drop any cached drive state from the previous account.
+    ref.invalidate(driveProvider);
   }
 }
 
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
+/// Signed-in identity: a pale accent disc with the initial, name and address.
+class _AccountRow extends StatelessWidget {
+  const _AccountRow({required this.displayName, required this.email});
+
+  final String? displayName;
+  final String? email;
 
   @override
   Widget build(BuildContext context) {
+    final p = context.sp;
+    final initial = (displayName?.isNotEmpty ?? false)
+        ? displayName![0].toUpperCase()
+        : '?';
     return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 8),
-      child: Text(
-        text,
-        style: FluentTheme.of(context).typography.caption?.copyWith(
-          color: context.colors.onSurfaceVariant,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.4,
-        ),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: p.blue100),
+            child: Text(
+              initial,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: p.accent,
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  displayName ?? 'Signed in',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 16, color: p.title),
+                ),
+                if (email != null) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    email!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: p.subtitle),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -1,19 +1,21 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models/drive_item.dart';
 import '../core/services/playback_progress_service.dart';
 import '../core/services/subtitle_service.dart';
-import '../core/theme/app_theme.dart';
-import '../core/widgets/motion.dart';
+import '../core/utils/format.dart';
+import '../core/theme/smartisan_kit.dart';
+import '../core/widgets/dialogs.dart';
+import '../core/widgets/smartisan_extras.dart';
 import '../core/widgets/states.dart';
-import '../pages/player_page.dart';
-import '../pages/folder_picker_page.dart';
+import '../core/widgets/video_thumb.dart';
 import '../providers/drive_provider.dart';
 import '../providers/playback_provider.dart';
+import 'folder_picker_page.dart';
+import 'player_page.dart';
 
 class BrowserPage extends ConsumerStatefulWidget {
   const BrowserPage({super.key});
@@ -23,8 +25,6 @@ class BrowserPage extends ConsumerStatefulWidget {
 }
 
 class _BrowserPageState extends ConsumerState<BrowserPage> {
-  final FlyoutController _moreController = FlyoutController();
-
   @override
   void initState() {
     super.initState();
@@ -39,19 +39,13 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     });
   }
 
-  @override
-  void dispose() {
-    _moreController.dispose();
-    super.dispose();
-  }
-
   Future<void> _openItem(DriveItem item) async {
     if (item.isFolder) {
       await ref.read(driveProvider.notifier).openFolder(item);
     } else if (item.isVideo) {
       final siblings = ref.read(driveProvider).items;
       await Navigator.of(context).push(
-        FluentPageRoute<void>(
+        SPageRoute<void>(
           builder: (_) => PlayerPage(video: item, siblings: siblings),
         ),
       );
@@ -61,29 +55,40 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     }
   }
 
-  Future<void> _clearProgress(DriveItem item) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => ContentDialog(
-        title: const Text('Clear resume position?'),
-        content: Text(
-          'Next time you open "${item.name}" it will start from the beginning.',
-        ),
-        actions: [
-          Button(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: AppTheme.destructiveConfirm(ctx),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Clear'),
-          ),
-        ],
-      ),
+  Future<void> _pickFolder() async {
+    final picked = await Navigator.of(context).push<bool>(
+      SModalPageRoute<bool>(builder: (_) => const FolderPickerPage()),
     );
-    if (confirmed == true && mounted) {
+    if (picked == true && mounted) {
+      showSToast(context, 'Video folder updated');
+    }
+  }
+
+  Future<void> _clearProgress(DriveItem item) async {
+    final confirmed = await showSConfirmDialog(
+      context,
+      title: 'Clear resume position?',
+      message:
+          'Next time you open "${item.name}" it will start from the beginning.',
+      confirmLabel: 'Clear',
+      destructive: true,
+    );
+    if (confirmed && mounted) {
       await ref.read(playbackProgressProvider.notifier).clear(item.id);
+    }
+  }
+
+  Future<void> _confirmClearAll() async {
+    final confirmed = await showSConfirmDialog(
+      context,
+      title: 'Clear all resume positions?',
+      message:
+          'Every video will start from the beginning next time you open it. This cannot be undone.',
+      confirmLabel: 'Clear all',
+      destructive: true,
+    );
+    if (confirmed && mounted) {
+      await ref.read(playbackProgressProvider.notifier).clearAll();
     }
   }
 
@@ -93,94 +98,47 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     final progress = ref.watch(playbackProgressProvider);
     final notifier = ref.read(driveProvider.notifier);
 
-    return ScaffoldPage(
-      header: PageHeader(
-        leading: drive.canGoBack
-            ? IconButton(
-                icon: const Icon(FluentIcons.back, size: 16),
-                onPressed: notifier.goBack,
-              )
-            : null,
-        title: Text(drive.current?.name ?? 'Videos'),
-        commandBar: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Tooltip(
-              message: 'Change video folder',
-              child: IconButton(
-                icon: const Icon(FluentIcons.folder_open, size: 18),
-                onPressed: () {
-                  unawaited(
-                    Navigator.of(context).push(
-                      FluentPageRoute<void>(
-                        builder: (_) => const FolderPickerPage(),
-                      ),
+    return Column(
+      children: [
+        SafeArea(
+          bottom: false,
+          child: SAppBar(
+            title: drive.current?.name ?? 'Videos',
+            onBack: drive.canGoBack ? notifier.goBack : null,
+            actions: [
+              SBarGlyphButton(icon: SGlyphs.folder, onTap: _pickFolder),
+              SBarGlyphButton(icon: SGlyphs.refresh, onTap: notifier.refresh),
+              Builder(
+                builder: (ctx) => SBarGlyphButton(
+                  icon: SGlyphs.more,
+                  onTap: () => unawaited(
+                    showSContextMenu(
+                      ctx,
+                      width: 260,
+                      items: [
+                        SMenuItem(
+                          'Clear all resume positions',
+                          onTap: () => unawaited(_confirmClearAll()),
+                        ),
+                      ],
                     ),
-                  );
-                },
-              ),
-            ),
-            Tooltip(
-              message: 'Refresh',
-              child: IconButton(
-                icon: const Icon(FluentIcons.refresh, size: 16),
-                onPressed: notifier.refresh,
-              ),
-            ),
-            FlyoutTarget(
-              controller: _moreController,
-              child: IconButton(
-                icon: const Icon(FluentIcons.more, size: 16),
-                onPressed: () => _moreController.showFlyout<void>(
-                  builder: (context) => MenuFlyout(
-                    items: [
-                      MenuFlyoutItem(
-                        leading: const Icon(FluentIcons.broom, size: 16),
-                        text: const Text('Clear all resume positions'),
-                        onPressed: () => unawaited(_confirmClearAll()),
-                      ),
-                    ],
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
-      ),
-      content: _Body(
-        drive: drive,
-        progress: progress,
-        onOpen: _openItem,
-        onClearProgress: _clearProgress,
-        onRetry: notifier.refresh,
-      ),
-    );
-  }
-
-  Future<void> _confirmClearAll() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => ContentDialog(
-        title: const Text('Clear all resume positions?'),
-        content: const Text(
-          'Every video will start from the beginning next time you open it. This cannot be undone.',
-        ),
-        actions: [
-          Button(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            ],
           ),
-          FilledButton(
-            style: AppTheme.destructiveConfirm(ctx),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Clear all'),
+        ),
+        Expanded(
+          child: _Body(
+            drive: drive,
+            progress: progress,
+            onOpen: _openItem,
+            onClearProgress: _clearProgress,
+            onRetry: notifier.refresh,
           ),
-        ],
-      ),
+        ),
+      ],
     );
-    if (confirmed == true && mounted) {
-      await ref.read(playbackProgressProvider.notifier).clearAll();
-    }
   }
 }
 
@@ -229,7 +187,7 @@ class _Body extends StatelessWidget {
     }
     if (drive.items.isEmpty) {
       return EmptyState(
-        icon: FluentIcons.folder_open,
+        icon: SGlyphs.folder,
         title: 'This folder is empty',
         message: 'Drop some videos into this folder and refresh.',
         actionLabel: 'Refresh',
@@ -237,300 +195,55 @@ class _Body extends StatelessWidget {
       );
     }
 
-    // Memoized single-pass matching (see _subCountCache): previously this
-    // ran SubtitleMatcher.match per video (O(videos × items)) on every
-    // build, including the 5 s progress-provider ticks.
+    // Memoized single-pass matching (see _subCountCache): matching every video
+    // against the whole list on each build would be O(videos × items), and
+    // _Body rebuilds on the 5 s progress ticks during playback.
     final subCounts = _subCountCache.of(drive.items);
 
-    return _gridView(drive.items, subCounts);
-  }
-
-  Widget _gridView(List<DriveItem> items, Map<String, int> subCounts) {
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 200,
-        childAspectRatio: 0.68,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: items.length,
+    return SCardList(
+      itemCount: drive.items.length,
       itemBuilder: (context, index) {
-        final item = items[index];
-        return FadeSlideIn(
-          delay: Duration(milliseconds: (index * 35).clamp(0, 280)),
-          child: _GridTile(
-            item: item,
-            progress: progress[item.id],
-            subtitleCount: subCounts[item.id] ?? 0,
-            onTap: () => onOpen(item),
-            onClearProgress: () => onClearProgress(item),
+        final item = drive.items[index];
+        final saved = progress[item.id];
+        final resumable = item.isVideo && saved != null && !saved.isFinished;
+        return SmartisanTile(
+          leading: item.isFolder
+              ? const Icon(SGlyphs.folder)
+              : VideoThumb(url: item.thumbnailUrl),
+          title: Text(
+            item.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
+          subtitle: _subtitleFor(item, saved, subCounts[item.id] ?? 0),
+          onTap: () => onOpen(item),
+          onLongPress: resumable ? () => onClearProgress(item) : null,
         );
       },
     );
   }
-}
 
-// ---------------------------------------------------------------------------
-// Grid view tile
-// ---------------------------------------------------------------------------
-
-class _GridTile extends StatelessWidget {
-  const _GridTile({
-    required this.item,
-    this.progress,
-    this.subtitleCount = 0,
-    required this.onTap,
-    required this.onClearProgress,
-  });
-
-  final DriveItem item;
-  final PlaybackProgress? progress;
-  final int subtitleCount;
-  final VoidCallback onTap;
-  final VoidCallback onClearProgress;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    final showResume =
-        item.isVideo && progress != null && !progress!.isFinished;
-
-    return Card(
-      padding: EdgeInsetsDirectional.zero,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: HoverButton(
-          onPressed: onTap,
-          onLongPress: showResume ? onClearProgress : null,
-          builder: (context, states) {
-            final hovered = states.contains(WidgetState.hovered);
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      _GridThumbnail(item: item),
-                      if (item.isFolder)
-                        Container(
-                          color: colors.accent.withValues(alpha: AppAlpha.tint),
-                          alignment: Alignment.center,
-                          child: Container(
-                            width: 64,
-                            height: 64,
-                            decoration: BoxDecoration(
-                              color: colors.accentContainer,
-                              shape: BoxShape.circle,
-                            ),
-                            alignment: Alignment.center,
-                            child: Icon(
-                              FluentIcons.folder_fill,
-                              size: 24,
-                              color: colors.accent,
-                            ),
-                          ),
-                        ),
-                      if (item.isVideo)
-                        const Positioned.fill(
-                          child: Center(child: _PlayBadge()),
-                        ),
-                      if (showResume && progress != null)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: ProgressBar(
-                            value: (progress!.fraction * 100).clamp(0, 100),
-                            strokeWidth: 3,
-                          ),
-                        ),
-                      if (subtitleCount > 0)
-                        Positioned(
-                          top: 6,
-                          right: 6,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(
-                                alpha: AppAlpha.overlay,
-                              ),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  FluentIcons.closed_caption,
-                                  size: 12,
-                                  color: Colors.white,
-                                ),
-                                const SizedBox(width: 3),
-                                Text(
-                                  '$subtitleCount',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      // Fluent-style hover highlight wash
-                      if (hovered)
-                        Positioned.fill(
-                          child: ColoredBox(
-                            color: colors.onSurface.withValues(
-                              alpha: AppAlpha.hoverWash,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        item.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: FluentTheme.of(context).typography.caption
-                            ?.copyWith(fontWeight: FontWeight.w500),
-                      ),
-                      if (showResume && progress != null) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          '${_formatDuration(Duration(milliseconds: (progress!.positionSeconds * 1000).round()))} left off',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colors.onSurfaceVariant,
-                            fontFeatures: AppTheme.tabularFigures,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ] else if (item.isVideo && item.size != null) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          _formatFileSize(item.size),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colors.onSurfaceVariant,
-                            fontFeatures: AppTheme.tabularFigures,
-                          ),
-                          maxLines: 1,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Thumbnails
-// ---------------------------------------------------------------------------
-
-class _GridThumbnail extends StatelessWidget {
-  const _GridThumbnail({required this.item});
-  final DriveItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    if (item.thumbnailUrl != null && item.thumbnailUrl!.isNotEmpty) {
-      return CachedNetworkImage(
-        imageUrl: item.thumbnailUrl!,
-        fit: BoxFit.cover,
-        placeholder: (_, _) => _ThumbnailPlaceholder(colors: colors),
-        errorWidget: (_, _, _) => _ThumbnailPlaceholder(colors: colors),
+  Widget? _subtitleFor(
+    DriveItem item,
+    PlaybackProgress? saved,
+    int subtitleCount,
+  ) {
+    final parts = <String>[];
+    if (item.isVideo && saved != null && !saved.isFinished) {
+      final at = Duration(
+        milliseconds: (saved.positionSeconds * 1000).round(),
       );
+      final total = Duration(
+        milliseconds: (saved.durationSeconds * 1000).round(),
+      );
+      parts.add('Resume ${formatDuration(at)}${total > Duration.zero ? ' of ${formatDuration(total)}' : ''}');
+    } else if (item.isVideo && item.size != null) {
+      parts.add(formatFileSize(item.size));
     }
-    return _ThumbnailPlaceholder(colors: colors);
+    if (subtitleCount > 0) {
+      parts.add('$subtitleCount subtitle${subtitleCount == 1 ? '' : 's'}');
+    }
+    if (parts.isEmpty) return null;
+    return Text(parts.join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis);
   }
-}
-
-class _ThumbnailPlaceholder extends StatelessWidget {
-  const _ThumbnailPlaceholder({required this.colors});
-  final AppColors colors;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: colors.surfaceContainerHigh,
-      alignment: Alignment.center,
-      // Icon stays at its designed size inside a subtly darker circle
-      // (scaling icons up past ~24px makes them look chunky).
-      child: Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          color: colors.surfaceContainer,
-          shape: BoxShape.circle,
-        ),
-        alignment: Alignment.center,
-        child: Icon(
-          FluentIcons.video,
-          size: 24,
-          color: colors.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
-}
-
-class _PlayBadge extends StatelessWidget {
-  const _PlayBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: AppAlpha.overlay),
-        shape: BoxShape.circle,
-      ),
-      alignment: Alignment.center,
-      child: const Icon(FluentIcons.play_solid, color: Colors.white, size: 22),
-    );
-  }
-}
-
-String _formatFileSize(int? bytes) {
-  if (bytes == null) return '';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  var size = bytes.toDouble();
-  var unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit++;
-  }
-  return '${size.toStringAsFixed(unit == 0 ? 0 : 1)} ${units[unit]}';
-}
-
-String _formatDuration(Duration d) {
-  final h = d.inHours;
-  final m = d.inMinutes.remainder(60);
-  final s = d.inSeconds.remainder(60);
-  final mm = m.toString().padLeft(2, '0');
-  final ss = s.toString().padLeft(2, '0');
-  return h > 0 ? '$h:$mm:$ss' : '$m:$ss';
 }
