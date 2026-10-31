@@ -1,93 +1,65 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:onedrive_video_player/core/errors/app_failure.dart';
 import 'package:onedrive_video_player/core/models/auth_tokens.dart';
+import 'package:onedrive_video_player/core/services/auth_interceptor.dart';
 import 'package:onedrive_video_player/core/services/auth_service.dart';
 import 'package:onedrive_video_player/core/services/graph_service.dart';
 import 'package:onedrive_video_player/core/services/token_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Scriptable [HttpClientAdapter]: queued handlers answer requests in order.
-class _FakeAdapter implements HttpClientAdapter {
-  final List<Future<ResponseBody> Function(RequestOptions)> handlers = [];
-  final List<RequestOptions> requests = [];
+import 'support/fake_secret_store.dart';
+import 'support/http_fakes.dart';
 
-  @override
-  Future<ResponseBody> fetch(
-    RequestOptions options,
-    Stream<Uint8List>? requestStream,
-    Future<void>? cancelFuture,
-  ) {
-    requests.add(options);
-    if (handlers.isEmpty) {
-      throw StateError('unexpected request: ${options.uri}');
-    }
-    return handlers.removeAt(0)(options);
-  }
+Map<String, dynamic> _file(String id, String name) => <String, dynamic>{
+  'id': id,
+  'name': name,
+  'file': <String, dynamic>{'mimeType': 'video/mp4'},
+  'size': 1024,
+};
 
-  @override
-  void close({bool force = false}) {}
-}
-
-Future<ResponseBody> _json(Map<String, dynamic> body, {int status = 200}) {
-  return Future.value(
-    ResponseBody.fromString(
-      jsonEncode(body),
-      status,
-      headers: {
-        Headers.contentTypeHeader: [Headers.jsonContentType],
-      },
-    ),
-  );
-}
-
-Map<String, dynamic> _page(
-  List<Map<String, dynamic>> items, [
-  String? nextLink,
-]) =>
-    <String, dynamic>{'value': items, '@odata.nextLink': ?nextLink};
-
-Map<String, dynamic> _file(String id, String name) =>
-    <String, dynamic>{'id': id, 'name': name};
+Map<String, dynamic> _page(List<Map<String, dynamic>> items, [String? next]) =>
+    <String, dynamic>{
+      'value': items,
+      '@odata.nextLink': ?next,
+    };
 
 Map<String, dynamic> _folder(String id, String name) =>
     <String, dynamic>{'id': id, 'name': name, 'folder': <String, dynamic>{}};
 
 void main() {
-  late _FakeAdapter adapter;
+  late FakeAdapter adapter;
   late Dio dio;
+  late AuthService auth;
   late GraphService graph;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    adapter = _FakeAdapter();
+    adapter = FakeAdapter();
     dio = Dio()..httpClientAdapter = adapter;
-    final auth = AuthService(dio, const TokenStorage());
-    // Seed valid (non-expired) tokens so ensureTokens() needs no network.
-    await const TokenStorage().save(
+    final storage = TokenStorage(store: FakeSecretStore());
+    // Seed valid (non-expired) tokens so the interceptor needs no refresh.
+    await storage.save(
       AuthTokens(
         accessToken: 'access',
         refreshToken: 'refresh',
         expiresAt: DateTime.now().add(const Duration(hours: 1)),
       ),
     );
-    graph = GraphService(dio, auth);
+    auth = AuthService(dio, storage);
+    dio.interceptors.add(AuthInterceptor(dio, auth));
+    graph = GraphService(dio);
   });
 
   tearDown(() => dio.close());
 
   test('listChildren follows @odata.nextLink and merges all pages', () async {
     adapter.handlers.add(
-      (_) => _json(
-        _page(
-          [_file('a', 'a.mp4')],
-          'https://graph.example/next?page=2',
-        ),
+      (_) => jsonResponse(
+        _page([_file('a', 'a.mp4')], 'https://graph.example/next?page=2'),
       ),
     );
-    adapter.handlers.add((_) => _json(_page([_file('b', 'b.mp4')])));
+    adapter.handlers.add((_) => jsonResponse(_page([_file('b', 'b.mp4')])));
 
     final items = await graph.listChildren('root');
 
@@ -95,26 +67,43 @@ void main() {
     expect(items.map((e) => e.name), ['a.mp4', 'b.mp4']);
   });
 
-  test('first page carries \$expand=thumbnails, next pages do not', () async {
+  test('first page projects \$select and expands thumbnails', () async {
     adapter.handlers.add(
-      (_) => _json(_page([_file('a', 'a.mp4')], 'https://graph.example/next')),
+      (_) => jsonResponse(
+        _page([_file('a', 'a.mp4')], 'https://graph.example/next'),
+      ),
     );
-    adapter.handlers.add((_) => _json(_page([_file('b', 'b.mp4')])));
+    adapter.handlers.add((_) => jsonResponse(_page([_file('b', 'b.mp4')])));
 
     await graph.listChildren('root');
 
-    expect(
-      adapter.requests[0].uri.queryParameters['\$expand'],
-      'thumbnails',
-    );
+    final first = adapter.requests[0];
+    expect(first.uri.queryParameters['\$expand'], 'thumbnails');
+    expect(first.uri.queryParameters['\$select'], contains('name'));
+    // The shared Dio's auth interceptor attached the bearer token.
+    expect(first.headers['Authorization'], 'Bearer access');
     // @odata.nextLink is followed verbatim: no extra query parameters added.
     expect(adapter.requests[1].uri.toString(), 'https://graph.example/next');
+  });
+
+  test('falls back to the unprojected listing when \$select is rejected',
+      () async {
+    adapter.handlers.add((_) => graphError('invalidRequest', status: 400));
+    adapter.handlers.add((_) => jsonResponse(_page([_file('a', 'a.mp4')])));
+
+    final items = await graph.listChildren('root');
+
+    expect(adapter.requests, hasLength(2));
+    expect(adapter.requests[0].uri.queryParameters['\$select'], isNotNull);
+    expect(adapter.requests[1].uri.queryParameters['\$select'], isNull);
+    expect(adapter.requests[1].uri.queryParameters['\$expand'], 'thumbnails');
+    expect(items.single.name, 'a.mp4');
   });
 
   test('listChildren sorts folders first, then files, case-insensitively',
       () async {
     adapter.handlers.add(
-      (_) => _json(
+      (_) => jsonResponse(
         _page([
           _file('f1', 'alpha.mp4'),
           _folder('d1', 'zeta'),
@@ -126,6 +115,18 @@ void main() {
 
     final items = await graph.listChildren('root');
 
-    expect(items.map((e) => e.name), ['Alpha', 'zeta', 'alpha.mp4', 'Bravo.mp4']);
+    expect(
+      items.map((e) => e.name),
+      ['Alpha', 'zeta', 'alpha.mp4', 'Bravo.mp4'],
+    );
+  });
+
+  test('maps Graph failures to a displayable failure', () async {
+    adapter.handlers.add((_) => graphError('itemNotFound', status: 404));
+
+    await expectLater(
+      graph.listChildren('gone'),
+      throwsA(isA<NotFoundFailure>()),
+    );
   });
 }

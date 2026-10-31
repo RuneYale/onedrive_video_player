@@ -140,6 +140,7 @@ class SCardList extends StatelessWidget {
     required this.itemCount,
     required this.itemBuilder,
     this.controller,
+    this.storageKey,
     this.padding = const EdgeInsets.fromLTRB(12, 8, 12, 24),
     this.maxWidth = 720,
   });
@@ -147,6 +148,11 @@ class SCardList extends StatelessWidget {
   final int itemCount;
   final NullableIndexedWidgetBuilder itemBuilder;
   final ScrollController? controller;
+
+  /// Identifies the list for [PageStorage]: every folder remembers its own
+  /// scroll offset, so switching folders starts at the top while going back
+  /// restores where you were.
+  final String? storageKey;
   final EdgeInsetsGeometry padding;
 
   /// Cards stay phone-sized and centred on a desktop window instead of
@@ -175,6 +181,9 @@ class SCardList extends StatelessWidget {
                 side: BorderSide(color: context.sp.border, width: SHair.md),
               ),
               child: ListView.separated(
+                key: storageKey == null
+                    ? null
+                    : PageStorageKey<String>(storageKey!),
                 controller: controller,
                 padding: EdgeInsets.zero,
                 itemCount: itemCount,

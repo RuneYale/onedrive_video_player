@@ -60,24 +60,42 @@ class _PlayerControlsState extends State<_PlayerControls> {
 
   bool _visible = true;
   bool _volumeOpen = false;
+  bool _playing = true;
   Timer? _hideTimer;
+  StreamSubscription<bool>? _playingSub;
 
   Player get _player => widget.state.widget.controller.player;
 
   @override
   void initState() {
     super.initState();
+    _playing = _player.state.playing;
     _restartHideTimer();
+    // Keep the bar up while paused: the user is usually looking at it to
+    // resume, change speed or pick a subtitle.
+    _playingSub = _player.stream.playing.listen((playing) {
+      if (!mounted) return;
+      _playing = playing;
+      if (playing) {
+        _restartHideTimer();
+      } else {
+        _hideTimer?.cancel();
+        if (!_visible) setState(() => _visible = true);
+      }
+    });
   }
 
   @override
   void dispose() {
     _hideTimer?.cancel();
+    unawaited(_playingSub?.cancel());
     super.dispose();
   }
 
   void _restartHideTimer() {
     _hideTimer?.cancel();
+    // Paused / finished / buffering: leave the controls where they are.
+    if (!_playing) return;
     _hideTimer = Timer(_hideDelay, () {
       if (mounted) setState(() => _visible = false);
     });

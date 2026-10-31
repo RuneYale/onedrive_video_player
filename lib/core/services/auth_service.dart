@@ -1,8 +1,15 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 
 import '../../config/auth_config.dart';
+import '../errors/app_failure.dart';
 import '../models/auth_tokens.dart';
 import 'token_storage.dart';
+
+/// Marks a request that must bypass the bearer-token interceptor (the token
+/// and device-code endpoints themselves).
+const kNoAuthRequest = 'odvp_no_auth';
 
 /// Response from the device-code authorization request.
 class DeviceCodeResponse {
@@ -83,6 +90,16 @@ class AuthService {
   /// trigger token-family revocation.
   Future<AuthTokens>? _refreshing;
 
+  final _sessionExpired = StreamController<SessionExpiredException>.broadcast();
+
+  /// Emits when the server rejects the refresh token: the session has already
+  /// been cleared, so listeners should drop the signed-in UI.
+  Stream<SessionExpiredException> get sessionExpired => _sessionExpired.stream;
+
+  void dispose() {
+    unawaited(_sessionExpired.close());
+  }
+
   /// Requests a device code that the user must authorize in a browser.
   Future<DeviceCodeResponse> requestDeviceCode() async {
     final res = await _dio.post<dynamic>(
@@ -91,7 +108,10 @@ class AuthService {
         'client_id': AuthConfig.clientId,
         'scope': AuthConfig.scopesString,
       },
-      options: Options(contentType: Headers.formUrlEncodedContentType),
+      options: Options(
+        contentType: Headers.formUrlEncodedContentType,
+        extra: {kNoAuthRequest: true},
+      ),
     );
     return DeviceCodeResponse.fromJson(res.data as Map<String, dynamic>);
   }
@@ -106,7 +126,10 @@ class AuthService {
           'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
           'device_code': deviceCode,
         },
-        options: Options(contentType: Headers.formUrlEncodedContentType),
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          extra: {kNoAuthRequest: true},
+        ),
       );
       final tokens = AuthTokens.fromJson(res.data as Map<String, dynamic>);
       _current = tokens;
@@ -162,9 +185,8 @@ class AuthService {
     if (_current != null && _current!.isExpired) {
       try {
         _current = await refresh(_current!);
-      } on SessionExpiredException {
-        _current = null;
-        await _storage.clear();
+      } on SessionExpiredException catch (e) {
+        await _dropSession(e);
       } catch (_) {
         // Transient refresh failure: keep the cached session.
       }
@@ -194,7 +216,10 @@ class AuthService {
           'refresh_token': tokens.refreshToken,
           'scope': AuthConfig.scopesString,
         },
-        options: Options(contentType: Headers.formUrlEncodedContentType),
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          extra: {kNoAuthRequest: true},
+        ),
       );
     } on DioException catch (e) {
       final data = e.response?.data;
@@ -223,22 +248,43 @@ class AuthService {
   }
 
   /// Returns valid (non-expired) tokens, refreshing if necessary.
-  /// Throws [StateError] when there is no signed-in account.
-  Future<AuthTokens> ensureTokens() async {
+  ///
+  /// [forceRefresh] is used by the 401 retry interceptor: it refreshes even
+  /// when the token has not expired yet, but only if [staleAccessToken] is
+  /// still the current one — if another request already rotated it, the fresh
+  /// token is returned instead of rotating again.
+  ///
+  /// Throws [NotAuthenticatedFailure] when there is no signed-in account.
+  Future<AuthTokens> ensureTokens({
+    bool forceRefresh = false,
+    String? staleAccessToken,
+  }) async {
     if (_current == null) await restore();
     final t = _current;
-    if (t == null) throw StateError('Not authenticated');
-    if (t.isExpired) {
+    if (t == null) throw const NotAuthenticatedFailure();
+    final mustRefresh =
+        t.isExpired ||
+        (forceRefresh &&
+            (staleAccessToken == null || t.accessToken == staleAccessToken));
+    if (mustRefresh) {
       try {
         return await refresh(t);
-      } on SessionExpiredException {
+      } on SessionExpiredException catch (e) {
         // The refresh token is dead — drop the session so the app falls
         // back to signed-out instead of retrying with a dead token.
-        await signOut();
+        await _dropSession(e);
         rethrow;
       }
     }
     return t;
+  }
+
+  /// Clears the stored session and notifies listeners (the UI returns to the
+  /// sign-in screen) — unlike [signOut], which is the user's own choice.
+  Future<void> _dropSession(SessionExpiredException reason) async {
+    _current = null;
+    await _storage.clear();
+    if (!_sessionExpired.isClosed) _sessionExpired.add(reason);
   }
 
   Future<void> signOut() async {

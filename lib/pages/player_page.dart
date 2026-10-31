@@ -6,7 +6,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:media_kit_video/media_kit_video_controls/media_kit_video_controls.dart'
+    as mk;
 
+import '../core/errors/app_failure.dart';
 import '../core/models/drive_item.dart';
 import '../core/models/subtitle_style.dart';
 import '../core/services/playback_progress_service.dart';
@@ -38,7 +41,7 @@ class PlayerPage extends ConsumerStatefulWidget {
 }
 
 class _PlayerPageState extends ConsumerState<PlayerPage> {
-  static const _progressInterval = Duration(seconds: 5);
+  static const _progressInterval = Duration(seconds: 30);
 
   final PlaybackProgressService _progress = PlaybackProgressService();
   final SubtitlePreferenceService _subtitlePref = SubtitlePreferenceService();
@@ -63,7 +66,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   List<DriveItem> _externalSubs = [];
 
   bool _loading = true;
-  String? _error;
+  AppFailure? _error;
   String? _selectedSubtitleId;
   String? _loadingSubtitleId;
   bool _locked = false;
@@ -84,6 +87,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   StreamSubscription<Tracks>? _tracksSub;
   StreamSubscription<Track>? _trackSub;
   StreamSubscription<String>? _errorSub;
+  StreamSubscription<bool>? _playingSub;
 
   @override
   void initState() {
@@ -138,6 +142,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       // Subscriptions are created once; retries (via [_retry]) reuse them.
       if (_positionSub == null) {
         _positionSub = _player.stream.position.listen(_onPosition);
+        // Checkpoint as soon as the user pauses: the 30 s timer may not have
+        // fired yet, and a pause is usually where the session ends.
+        _playingSub = _player.stream.playing.listen((playing) {
+          if (!playing) _saveProgress();
+        });
         _durationSub = _player.stream.duration.listen(_onDuration);
         _completedSub = _player.stream.completed.listen(_onCompleted);
         _tracksSub = _player.stream.tracks.listen((t) {
@@ -156,7 +165,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         _errorSub = _player.stream.error.listen((error) {
           if (!mounted || error.isEmpty) return;
           setState(() {
-            _error = error;
+            // mpv surfaces raw strings (expired URL, decoder error); wrap so
+            // the screen can show a sentence plus the technical detail.
+            _error = PlaybackFailure(detail: error);
             _loading = false;
           });
         });
@@ -191,7 +202,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = AppFailure.from(e);
           _loading = false;
         });
       }
@@ -209,23 +220,28 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   void _onPosition(Duration position) {
-    // Periodic auto-save so a crash doesn't lose much progress.
-    if ((position - _lastSaved).abs() > _progressInterval) {
-      _lastSaved = position;
-      if (position > const Duration(seconds: 3) && !_completed) {
-        unawaited(
-          _progress.save(
-            widget.video.id,
-            position,
-            _player.state.duration,
-            name: widget.video.name,
-            thumbnailUrl: widget.video.thumbnailUrl,
-            size: widget.video.size,
-            parentId: widget.video.parentId,
-          ),
-        );
-      }
-    }
+    // A checkpoint every 30 s is enough to survive a crash; writes are whole-
+    // blob JSON updates, so the old 5 s cadence was pure disk churn.
+    if ((position - _lastSaved).abs() < _progressInterval) return;
+    _lastSaved = position;
+    _saveProgress();
+  }
+
+  /// Persists the current position (no-op when nothing worth resuming).
+  void _saveProgress() {
+    final position = _player.state.position;
+    if (_completed || position <= const Duration(seconds: 3)) return;
+    unawaited(
+      _progress.save(
+        widget.video.id,
+        position,
+        _player.state.duration,
+        name: widget.video.name,
+        thumbnailUrl: widget.video.thumbnailUrl,
+        size: widget.video.size,
+        parentId: widget.video.parentId,
+      ),
+    );
   }
 
   void _onDuration(Duration duration) {
@@ -466,34 +482,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     // Set first so any in-flight async loop (resume confirmation) stops
     // before the player underneath it is disposed.
     _disposed = true;
-    final position = _player.state.position;
-    final duration = _player.state.duration;
-    final shouldSave = !_completed && position > const Duration(seconds: 3);
+    // Checkpoint before the player goes away; the write itself is
+    // fire-and-forget (SharedPreferences completes on its own).
+    _saveProgress();
 
     unawaited(_positionSub?.cancel());
     unawaited(_durationSub?.cancel());
     unawaited(_completedSub?.cancel());
     unawaited(_tracksSub?.cancel());
     unawaited(_trackSub?.cancel());
+    unawaited(_playingSub?.cancel());
     unawaited(_errorSub?.cancel());
     unawaited(_player.dispose());
-
-    if (shouldSave) {
-      // Fire-and-forget: the widget is being torn down, so there is nothing
-      // to await against. The service writes through SharedPreferences which
-      // completes on its own.
-      unawaited(
-        _progress.save(
-          widget.video.id,
-          position,
-          duration,
-          name: widget.video.name,
-          thumbnailUrl: widget.video.thumbnailUrl,
-          size: widget.video.size,
-          parentId: widget.video.parentId,
-        ),
-      );
-    }
     super.dispose();
   }
 
@@ -505,7 +505,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
     Widget body;
     if (_error != null) {
-      body = ErrorState(message: _error!, onRetry: _retry);
+      body = ErrorState(
+        message: _error!.message,
+        detail: _error!.detail,
+        onRetry: _retry,
+      );
     } else if (_loading) {
       body = const LoadingState(label: 'Opening video…');
     } else {
@@ -579,14 +583,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         backgroundColor: AppTheme.playerSurface,
         body: Focus(
           autofocus: true,
-          onKeyEvent: (node, event) {
-            if (event is KeyDownEvent &&
-                event.logicalKey == LogicalKeyboardKey.escape) {
-              Navigator.of(context).pop();
-              return KeyEventResult.handled;
-            }
-            return KeyEventResult.ignored;
-          },
+          onKeyEvent: _onKeyEvent,
           child: Stack(
             children: [
               body,
@@ -610,6 +607,84 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   /// Real audio tracks (excluding the libmpv 'auto'/'no' placeholders).
   List<AudioTrack> get _audioTracks =>
       _tracks.audio.where((t) => t.id != 'auto' && t.id != 'no').toList();
+
+  // --- Desktop keyboard ---------------------------------------------------
+
+  /// Desktop shortcuts, the same set the usual players offer. Taps and drags
+  /// on the video keep working; this only adds a keyboard path.
+  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+
+    if (key == LogicalKeyboardKey.escape) {
+      Navigator.of(context).pop();
+      return KeyEventResult.handled;
+    }
+    if (_loading || _error != null) return KeyEventResult.ignored;
+
+    // Media playback keys.
+    if (key == LogicalKeyboardKey.space || key == LogicalKeyboardKey.keyK) {
+      unawaited(_player.playOrPause());
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyJ ||
+        key == LogicalKeyboardKey.arrowLeft) {
+      _seekBy(const Duration(seconds: -5));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyL ||
+        key == LogicalKeyboardKey.arrowRight) {
+      _seekBy(const Duration(seconds: 5));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      _nudgeVolume(5);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _nudgeVolume(-5);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyM) {
+      final volume = _player.state.volume;
+      unawaited(_player.setVolume(volume > 0 ? 0 : 100));
+      _flash(volume > 0 ? 'Muted' : 'Volume 100%');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyF) {
+      unawaited(mk.toggleFullscreen(context));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyC) {
+      unawaited(_showSubtitlePicker());
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _seekBy(Duration delta) {
+    final duration = _player.state.duration;
+    var target = _player.state.position + delta;
+    if (target < Duration.zero) target = Duration.zero;
+    if (duration > Duration.zero && target > duration) target = duration;
+    unawaited(_player.seek(target));
+    _flash(
+      '${delta.isNegative ? '−' : '+'}${delta.inSeconds.abs()}s  '
+      '${formatDuration(target)}',
+    );
+  }
+
+  void _nudgeVolume(double delta) {
+    final next = (_player.state.volume + delta).clamp(0.0, 100.0);
+    unawaited(_player.setVolume(next));
+    _flash('Volume ${next.round()}%');
+  }
+
+  /// Short-lived feedback for keyboard actions, above the control bar.
+  void _flash(String text) {
+    if (!mounted) return;
+    showSToast(context, text, bottom: 118);
+  }
 
   Future<void> _showSubtitlePicker() async {
     final choices = _choices;

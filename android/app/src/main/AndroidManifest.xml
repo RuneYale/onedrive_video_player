@@ -1,8 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- allowBackup=false keeps the session/secure preferences out of Android
+         Auto Backup: the token ciphertext is tied to this device's Keystore and
+         must not be copied to another device. -->
     <application
-        android:label="onedrive_video_player"
+        android:label="OneDrive Video"
         android:name="${applicationName}"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

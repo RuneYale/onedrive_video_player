@@ -50,7 +50,7 @@ dependencies:
 
   # Cached network images for video thumbnails
   cached_network_image: ^3.4.1
-
+  ffi: ^2.2.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

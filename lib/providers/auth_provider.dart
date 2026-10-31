@@ -3,25 +3,41 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/errors/app_failure.dart';
 import '../core/models/auth_tokens.dart';
+import '../core/services/auth_interceptor.dart';
 import '../core/services/auth_service.dart';
 import '../core/services/token_storage.dart';
 
 /// Shared [Dio] instance for identity + Graph HTTP calls.
+///
+/// The auth interceptor is installed by [authServiceProvider] (it needs the
+/// service), so every request through this instance carries the bearer token
+/// and gets the transparent 401 refresh-and-retry.
 final dioProvider = Provider<Dio>((ref) {
-  return Dio(
+  final dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 30),
     ),
   );
+  ref.onDispose(dio.close);
+  return dio;
 });
 
 final tokenStorageProvider =
     Provider<TokenStorage>((ref) => const TokenStorage());
 
 final authServiceProvider = Provider<AuthService>((ref) {
-  return AuthService(ref.watch(dioProvider), ref.watch(tokenStorageProvider));
+  final dio = ref.watch(dioProvider);
+  final service = AuthService(dio, ref.watch(tokenStorageProvider));
+  final interceptor = AuthInterceptor(dio, service);
+  dio.interceptors.add(interceptor);
+  ref.onDispose(() {
+    dio.interceptors.remove(interceptor);
+    service.dispose();
+  });
+  return service;
 });
 
 sealed class AuthState {
@@ -68,6 +84,13 @@ class AuthNotifier extends Notifier<AuthState> {
     _auth = ref.read(authServiceProvider);
     _storage = ref.read(tokenStorageProvider);
     _pollGen = 0;
+    // The service clears the stored session when Microsoft rejects the refresh
+    // token; mirror that here so the app falls back to the sign-in screen
+    // instead of showing errors on top of a "signed in" UI.
+    final expired = _auth.sessionExpired.listen((_) {
+      if (ref.mounted) state = const AuthUnauthenticated();
+    });
+    ref.onDispose(expired.cancel);
     unawaited(_restore());
     // Increment the poll generation on dispose to cancel any in-flight poll.
     ref.onDispose(() => _pollGen++);
@@ -105,7 +128,7 @@ class AuthNotifier extends Notifier<AuthState> {
       state = AuthAuthenticating(dc);
       unawaited(_poll(dc, gen: _pollGen, intervalSeconds: dc.interval));
     } catch (e) {
-      state = AuthError(e.toString());
+      state = AuthError(_messageFor(e));
     }
   }
 
@@ -141,9 +164,14 @@ class AuthNotifier extends Notifier<AuthState> {
     } on AuthException catch (e) {
       if (gen == _pollGen) state = AuthError(e.message);
     } catch (e) {
-      if (gen == _pollGen) state = AuthError(e.toString());
+      if (gen == _pollGen) state = AuthError(_messageFor(e));
     }
   }
+
+  /// Sign-in errors are shown verbatim, so map network trouble to a sentence
+  /// instead of a `DioException` dump.
+  String _messageFor(Object error) =>
+      error is AuthException ? error.message : AppFailure.from(error).message;
 
   /// Cancels an in-progress sign-in.
   void cancelSignIn() {

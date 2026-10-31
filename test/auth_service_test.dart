@@ -1,64 +1,34 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:onedrive_video_player/core/errors/app_failure.dart';
 import 'package:onedrive_video_player/core/models/auth_tokens.dart';
 import 'package:onedrive_video_player/core/services/auth_service.dart';
 import 'package:onedrive_video_player/core/services/token_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Scriptable [HttpClientAdapter]: queued handlers answer requests in order.
-class _FakeAdapter implements HttpClientAdapter {
-  final List<Future<ResponseBody> Function(RequestOptions)> handlers = [];
-  final List<RequestOptions> requests = [];
-
-  @override
-  Future<ResponseBody> fetch(
-    RequestOptions options,
-    Stream<Uint8List>? requestStream,
-    Future<void>? cancelFuture,
-  ) {
-    requests.add(options);
-    if (handlers.isEmpty) {
-      throw StateError('unexpected request: ${options.uri}');
-    }
-    return handlers.removeAt(0)(options);
-  }
-
-  @override
-  void close({bool force = false}) {}
-}
-
-Future<ResponseBody> _json(Map<String, dynamic> body, {int status = 200}) {
-  return Future.value(
-    ResponseBody.fromString(
-      jsonEncode(body),
-      status,
-      headers: {
-        Headers.contentTypeHeader: [Headers.jsonContentType],
-      },
-    ),
-  );
-}
+import 'support/fake_secret_store.dart';
+import 'support/http_fakes.dart';
 
 AuthTokens _expired() => AuthTokens(
-      accessToken: 'old-access',
-      refreshToken: 'old-refresh',
-      expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
-    );
+  accessToken: 'old-access',
+  refreshToken: 'old-refresh',
+  expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
+);
 
 void main() {
-  late _FakeAdapter adapter;
+  late FakeAdapter adapter;
   late Dio dio;
+  late TokenStorage storage;
   late AuthService service;
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    adapter = _FakeAdapter();
+    adapter = FakeAdapter();
     dio = Dio()..httpClientAdapter = adapter;
-    service = AuthService(dio, const TokenStorage());
+    storage = TokenStorage(store: FakeSecretStore());
+    service = AuthService(dio, storage);
   });
 
   tearDown(() => dio.close());
@@ -93,7 +63,7 @@ void main() {
       final gate = Completer<void>();
       adapter.handlers.add((_) async {
         await gate.future;
-        return _json({
+        return jsonResponse({
           'access_token': 'new-access',
           'refresh_token': 'new-refresh',
           'expires_in': 3600,
@@ -111,7 +81,7 @@ void main() {
     test('sequential refreshes issue separate requests', () async {
       for (var i = 0; i < 2; i++) {
         adapter.handlers.add(
-          (_) => _json({'access_token': 'a$i', 'refresh_token': 'r$i'}),
+          (_) => jsonResponse({'access_token': 'a$i', 'refresh_token': 'r$i'}),
         );
       }
       await service.refresh(_expired());
@@ -120,14 +90,14 @@ void main() {
     });
 
     test('keeps old refresh token when response omits it', () async {
-      adapter.handlers.add((_) => _json({'access_token': 'a2'}));
+      adapter.handlers.add((_) => jsonResponse({'access_token': 'a2'}));
       final t = await service.refresh(_expired());
       expect(t.refreshToken, 'old-refresh');
     });
 
     test('throws SessionExpiredException on invalid_grant', () async {
       adapter.handlers.add(
-        (_) => _json(
+        (_) => jsonResponse(
           {'error': 'invalid_grant', 'error_description': 'token expired'},
           status: 400,
         ),
@@ -141,7 +111,7 @@ void main() {
 
   group('AuthService.restore', () {
     test('transient failure keeps the cached session', () async {
-      await const TokenStorage().save(_expired(), name: 'n', email: 'e');
+      await storage.save(_expired(), name: 'n', email: 'e');
       adapter.handlers.add(
         (options) async => throw DioException(
           requestOptions: options,
@@ -151,17 +121,27 @@ void main() {
       );
       await service.restore();
       expect(service.current, isNotNull);
-      expect(await const TokenStorage().load(), isNotNull);
+      expect(await storage.load(), isNotNull);
     });
 
     test('invalid_grant clears the session', () async {
-      await const TokenStorage().save(_expired(), name: 'n', email: 'e');
+      await storage.save(_expired(), name: 'n', email: 'e');
       adapter.handlers.add(
-        (_) => _json({'error': 'invalid_grant'}, status: 400),
+        (_) => jsonResponse({'error': 'invalid_grant'}, status: 400),
       );
       await service.restore();
       expect(service.current, isNull);
-      expect(await const TokenStorage().load(), isNull);
+      expect(await storage.load(), isNull);
+    });
+
+    test('announces the lost session so the UI can sign out', () async {
+      await storage.save(_expired(), name: 'n', email: 'e');
+      adapter.handlers.add(
+        (_) => jsonResponse({'error': 'invalid_grant'}, status: 400),
+      );
+      final expiry = service.sessionExpired.first;
+      await service.restore();
+      await expectLater(expiry, completes);
     });
   });
 
@@ -170,19 +150,44 @@ void main() {
       // The first refresh succeeds but returns immediately-expired tokens
       // (expires_in: 0), so ensureTokens() must refresh again — and that
       // second refresh is rejected with invalid_grant.
-      await const TokenStorage().save(_expired(), name: 'n', email: 'e');
+      await storage.save(_expired(), name: 'n', email: 'e');
       adapter.handlers.add(
-        (_) => _json({'access_token': 'a2', 'expires_in': 0}),
+        (_) => jsonResponse({'access_token': 'a2', 'expires_in': 0}),
       );
       adapter.handlers.add(
-        (_) => _json({'error': 'invalid_grant'}, status: 400),
+        (_) => jsonResponse({'error': 'invalid_grant'}, status: 400),
       );
       await expectLater(
         service.ensureTokens(),
         throwsA(isA<SessionExpiredException>()),
       );
       expect(service.current, isNull);
-      expect(await const TokenStorage().load(), isNull);
+      expect(await storage.load(), isNull);
+    });
+
+    test('forceRefresh rotates only when the token is still the stale one',
+        () async {
+      await storage.save(
+        AuthTokens(
+          accessToken: 'current-access',
+          refreshToken: 'r',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+      );
+      // Another request already rotated the token: no refresh should happen.
+      final tokens = await service.ensureTokens(
+        forceRefresh: true,
+        staleAccessToken: 'old-access',
+      );
+      expect(tokens.accessToken, 'current-access');
+      expect(adapter.requests, isEmpty);
+    });
+
+    test('throws NotAuthenticatedFailure when there is no session', () async {
+      await expectLater(
+        service.ensureTokens(),
+        throwsA(isA<NotAuthenticatedFailure>()),
+      );
     });
   });
 }

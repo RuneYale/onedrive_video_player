@@ -37,6 +37,10 @@ class VideoThumb extends StatelessWidget {
           ? CachedNetworkImage(
               imageUrl: url!,
               fit: BoxFit.cover,
+              // The row is 64×36: decode at ~3x that instead of at the
+              // server's medium size (480×270+), which would keep a full-size
+              // bitmap in memory for every row in the folder.
+              memCacheWidth: (width * 3).round(),
               placeholder: (_, _) => _Glyph(glyph: glyph),
               errorWidget: (_, _, _) => _Glyph(glyph: glyph),
             )

@@ -110,6 +110,10 @@ class PlaybackProgressService {
 
   static const _kProgressMap = 'odvp_playback_progress';
 
+  /// Schema version of the stored envelope. Bump it when the layout changes
+  /// and add a branch in [all].
+  static const _kSchemaVersion = 1;
+
   /// Maximum number of entries kept. When a save would exceed this, the
   /// oldest entries by `updatedAt` are dropped so the stored JSON blob (which
   /// is fully decoded/re-encoded on every save) stays small.
@@ -133,23 +137,44 @@ class PlaybackProgressService {
     return result;
   }
 
+  /// Every stored resume point, tolerant to damage.
+  ///
+  /// One malformed entry (an old build, a half-written value, a changed field
+  /// type) used to invalidate the whole blob and silently erase the user's
+  /// entire resume history; now the bad rows are skipped and the rest load.
+  /// The next save rewrites the blob without them.
   Future<Map<String, PlaybackProgress>> all() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_kProgressMap);
     if (raw == null || raw.isEmpty) return <String, PlaybackProgress>{};
+
+    final Object? decoded;
     try {
-      final decoded = jsonDecode(raw) as Map<String, dynamic>;
-      // Build a *modifiable* map: Map.map() returns an unmodifiable view and
-      // save()/clear() mutate the result, so copy entries explicitly.
-      final result = <String, PlaybackProgress>{};
-      decoded.forEach((k, v) {
-        result[k] = PlaybackProgress.fromMap(v as Map<String, dynamic>);
-      });
-      return result;
+      decoded = jsonDecode(raw);
     } catch (_) {
-      // Corrupt payload: start fresh rather than crash.
+      // Not JSON at all: nothing recoverable.
       return <String, PlaybackProgress>{};
     }
+    if (decoded is! Map<String, dynamic>) return <String, PlaybackProgress>{};
+
+    // v1 wraps the map so the layout can evolve; the bare map is the
+    // pre-versioning format written by older builds.
+    final entries = decoded['v'] is int && decoded['entries'] is Map
+        ? decoded['entries'] as Map<String, dynamic>
+        : decoded;
+
+    // Build a *modifiable* map: Map.map() returns an unmodifiable view and
+    // save()/clear() mutate the result, so copy entries explicitly.
+    final result = <String, PlaybackProgress>{};
+    entries.forEach((id, value) {
+      if (value is! Map<String, dynamic>) return;
+      try {
+        result[id] = PlaybackProgress.fromMap(value);
+      } catch (_) {
+        // Skip just this row.
+      }
+    });
+    return result;
   }
 
   Future<PlaybackProgress?> get(String itemId) async {
@@ -225,9 +250,10 @@ class PlaybackProgressService {
 
   Future<void> _writeAll(Map<String, PlaybackProgress> entries) async {
     final prefs = await SharedPreferences.getInstance();
-    final encoded = jsonEncode(
-      entries.map((k, v) => MapEntry(k, v.toMap())),
-    );
+    final encoded = jsonEncode(<String, dynamic>{
+      'v': _kSchemaVersion,
+      'entries': entries.map((k, v) => MapEntry(k, v.toMap())),
+    });
     await prefs.setString(_kProgressMap, encoded);
   }
 }

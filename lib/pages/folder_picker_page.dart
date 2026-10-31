@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/errors/app_failure.dart';
 import '../core/models/drive_item.dart';
 import '../core/theme/smartisan_kit.dart';
 import '../core/widgets/smartisan_extras.dart';
@@ -25,7 +26,7 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
   final List<_PickerFolder> _stack = [];
   List<DriveItem> _items = const [];
   bool _loading = true;
-  String? _error;
+  AppFailure? _error;
 
   bool get _canGoBack => _stack.length > 1;
 
@@ -52,7 +53,7 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = AppFailure.from(e);
         _loading = false;
       });
     }
@@ -117,7 +118,13 @@ class _FolderPickerPageState extends ConsumerState<FolderPickerPage> {
 
   Widget _body() {
     if (_loading) return const LoadingState(label: 'Loading folders…');
-    if (_error != null) return ErrorState(message: _error!, onRetry: _load);
+    if (_error != null) {
+      return ErrorState(
+        message: _error!.message,
+        detail: _error!.detail,
+        onRetry: _load,
+      );
+    }
     if (_items.isEmpty) {
       return EmptyState(
         icon: SGlyphs.folder,

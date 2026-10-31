@@ -329,4 +329,68 @@ void main() {
       expect(await service.get('item1'), isNull);
     });
   });
+
+  group('damaged storage', () {
+    // The service reads preferences on every call, so seeding the mock is
+    // enough to simulate an on-disk payload written by another build.
+    void seed(String raw) =>
+        SharedPreferences.setMockInitialValues({'odvp_playback_progress': raw});
+
+    test('one malformed entry does not wipe the others', () async {
+      seed(
+        jsonEncode({
+          'good': {
+            'position': 30,
+            'duration': 100,
+            'updatedAt': '2026-07-09T00:00:00.000',
+          },
+          'bad': {'position': 'not-a-number'},
+          'alsoGood': {
+            'position': 10,
+            'duration': 100,
+            'updatedAt': '2026-07-09T00:00:00.000',
+          },
+        }),
+      );
+
+      final all = await service.all();
+
+      expect(all.keys, containsAll(['good', 'alsoGood']));
+      expect(all.containsKey('bad'), isFalse);
+    });
+
+    test('reads the pre-versioning flat map', () async {
+      seed(
+        jsonEncode({
+          'legacy': {
+            'position': 12,
+            'duration': 60,
+            'updatedAt': '2026-07-09T00:00:00.000',
+          },
+        }),
+      );
+
+      expect(await service.get('legacy'), isNotNull);
+    });
+
+    test('writes the versioned envelope and stays readable', () async {
+      await service.save(
+        'item1',
+        const Duration(seconds: 5),
+        const Duration(seconds: 60),
+      );
+      final prefs = await SharedPreferences.getInstance();
+      final decoded =
+          jsonDecode(prefs.getString('odvp_playback_progress')!)
+              as Map<String, dynamic>;
+      expect(decoded['v'], 1);
+      expect(decoded['entries'], isA<Map<String, dynamic>>());
+      expect(await service.get('item1'), isNotNull);
+    });
+
+    test('non-JSON payload is ignored instead of throwing', () async {
+      seed('not json {{{');
+      expect(await service.all(), isEmpty);
+    });
+  });
 }

@@ -3,12 +3,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:onedrive_video_player/core/services/token_storage.dart';
 import 'package:onedrive_video_player/core/theme/app_theme.dart';
 import 'package:onedrive_video_player/core/theme/smartisan_kit.dart';
 import 'package:onedrive_video_player/core/widgets/smartisan_extras.dart';
 import 'package:onedrive_video_player/pages/home_page.dart';
 import 'package:onedrive_video_player/pages/login_page.dart';
+import 'package:onedrive_video_player/providers/auth_provider.dart';
 import 'package:onedrive_video_player/widgets/subtitle_style_editor.dart';
+
+import 'support/fake_secret_store.dart';
 
 /// Layout smoke tests: every screen is pumped at a phone width (the kit is
 /// drawn for 432dp) and at a desktop window, and any RenderFlex overflow or
@@ -21,6 +25,9 @@ void main() {
   });
 
   Widget wrap(Widget home) => ProviderScope(
+    // The platform keystore has no implementation in a widget test; the
+    // in-memory store keeps the auth restore path synchronous.
+    overrides: [tokenStorageProvider.overrideWithValue(TokenStorage(store: FakeSecretStore()))],
     child: MaterialApp(
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),

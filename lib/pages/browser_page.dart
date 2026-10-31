@@ -98,6 +98,16 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     final progress = ref.watch(playbackProgressProvider);
     final notifier = ref.read(driveProvider.notifier);
 
+    // A failed refresh over a populated folder keeps the rows on screen; the
+    // failure is surfaced as a toast instead of replacing the list.
+    ref.listen<DriveState>(driveProvider, (previous, next) {
+      final error = next.error;
+      if (error == null || previous?.error == error || next.items.isEmpty) {
+        return;
+      }
+      showSToast(context, error.message, bottom: 90);
+    });
+
     return Column(
       children: [
         SafeArea(
@@ -107,7 +117,23 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
             onBack: drive.canGoBack ? notifier.goBack : null,
             actions: [
               SBarGlyphButton(icon: SGlyphs.folder, onTap: _pickFolder),
-              SBarGlyphButton(icon: SGlyphs.refresh, onTap: notifier.refresh),
+              if (drive.refreshing)
+                Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: context.sp.accent,
+                    ),
+                  ),
+                )
+              else
+                SBarGlyphButton(
+                  icon: SGlyphs.refresh,
+                  onTap: notifier.refresh,
+                ),
               Builder(
                 builder: (ctx) => SBarGlyphButton(
                   icon: SGlyphs.more,
@@ -135,6 +161,7 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
             onOpen: _openItem,
             onClearProgress: _clearProgress,
             onRetry: notifier.refresh,
+            onChangeFolder: _pickFolder,
           ),
         ),
       ],
@@ -169,6 +196,7 @@ class _Body extends StatelessWidget {
     required this.onOpen,
     required this.onClearProgress,
     required this.onRetry,
+    required this.onChangeFolder,
   });
 
   final DriveState drive;
@@ -176,14 +204,23 @@ class _Body extends StatelessWidget {
   final ValueChanged<DriveItem> onOpen;
   final ValueChanged<DriveItem> onClearProgress;
   final VoidCallback onRetry;
+  final VoidCallback onChangeFolder;
 
   @override
   Widget build(BuildContext context) {
-    if (drive.loading && drive.items.isEmpty) {
+    if (drive.coldLoading) {
       return const LoadingState(label: 'Loading your videos…');
     }
     if (drive.error != null && drive.items.isEmpty) {
-      return ErrorState(message: drive.error!, onRetry: onRetry);
+      return ErrorState(
+        message: drive.error!.message,
+        detail: drive.error!.detail,
+        onRetry: onRetry,
+        // The library folder can be deleted or renamed on OneDrive; retrying
+        // alone would loop on the same failure.
+        secondaryLabel: 'Choose another folder',
+        onSecondary: onChangeFolder,
+      );
     }
     if (drive.items.isEmpty) {
       return EmptyState(
@@ -201,6 +238,9 @@ class _Body extends StatelessWidget {
     final subCounts = _subCountCache.of(drive.items);
 
     return SCardList(
+      // Per-folder scroll memory: switching folders starts at the top, going
+      // back restores the offset you left.
+      storageKey: drive.current?.id,
       itemCount: drive.items.length,
       itemBuilder: (context, index) {
         final item = drive.items[index];
