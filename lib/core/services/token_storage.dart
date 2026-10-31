@@ -37,8 +37,12 @@ class TokenStorage {
       tokens.refreshToken,
       tokens.expiresAt,
     );
-    if (name == null && email == null) return;
     final prefs = await SharedPreferences.getInstance();
+    // A fresh sign-in must also erase plaintext tokens left by an older build
+    // (e.g. if the app was updated while signed out, so load() never migrated).
+    await prefs.remove(_kAccessToken);
+    await prefs.remove(_kRefreshToken);
+    await prefs.remove(_kExpiresAt);
     if (name != null) await prefs.setString(_kUserName, name);
     if (email != null) await prefs.setString(_kUserEmail, email);
   }
