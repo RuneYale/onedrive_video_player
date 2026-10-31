@@ -346,15 +346,19 @@ class _Control extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) => Tooltip(
-    message: label,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 5),
-      child: SBarGlyphButton(
-        icon: icon,
-        size: 21,
-        color: Colors.white,
-        onTap: onPressed,
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: label,
+    child: Tooltip(
+      message: label,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        child: SBarGlyphButton(
+          icon: icon,
+          size: 21,
+          color: Colors.white,
+          onTap: onPressed,
+        ),
       ),
     ),
   );

@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:onedrive_video_player/core/models/drive_item.dart';
 import 'package:onedrive_video_player/core/services/token_storage.dart';
 import 'package:onedrive_video_player/core/theme/app_theme.dart';
 import 'package:onedrive_video_player/core/theme/smartisan_kit.dart';
 import 'package:onedrive_video_player/core/widgets/smartisan_extras.dart';
 import 'package:onedrive_video_player/pages/home_page.dart';
 import 'package:onedrive_video_player/pages/login_page.dart';
+import 'package:onedrive_video_player/pages/search_page.dart';
 import 'package:onedrive_video_player/providers/auth_provider.dart';
 import 'package:onedrive_video_player/widgets/subtitle_style_editor.dart';
 
@@ -93,6 +95,30 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Subtitle appearance'), findsOneWidget);
     expect(find.text('Reset to defaults'), findsOneWidget);
+  });
+
+  testWidgets('folder search filters the listing', (tester) async {
+    await useSize(tester, const Size(432, 900));
+    await tester.pumpWidget(
+      wrap(
+        FolderSearchPage(
+          title: 'Videos',
+          items: [
+            DriveItem(id: '1', name: 'Blue Planet.mp4', isFolder: false),
+            DriveItem(id: '2', name: 'Movies', isFolder: true),
+          ],
+        ),
+      ),
+    );
+    await settleSession(tester);
+    expect(tester.takeException(), isNull);
+    expect(find.text('Search this folder'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'blue');
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Blue Planet.mp4'), findsOneWidget);
+    expect(find.text('Movies'), findsNothing);
   });
 
   testWidgets('long names ellipsize in the bar and in cards', (tester) async {

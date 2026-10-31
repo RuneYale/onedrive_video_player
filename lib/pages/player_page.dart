@@ -18,18 +18,19 @@ import '../core/services/subtitle_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/smartisan_kit.dart';
 import '../core/utils/format.dart';
-import '../core/widgets/smartisan_extras.dart';
 import '../core/widgets/states.dart';
 import '../providers/drive_provider.dart';
+import '../providers/playback_provider.dart';
 import '../providers/subtitle_style_provider.dart';
 import '../widgets/player_gesture_overlay.dart';
 import '../widgets/speed_picker.dart';
 import '../widgets/subtitle_controls.dart';
 import '../widgets/subtitle_style_editor.dart';
+import 'player/choice_dialog.dart';
+import 'player/player_chrome.dart';
+import 'player/subtitle_choices.dart';
 
 /// Sent by the subtitle dialog's appearance action.
-const _kAppearanceAction = 'appearance';
-
 class PlayerPage extends ConsumerStatefulWidget {
   const PlayerPage({required this.video, required this.siblings, super.key});
 
@@ -43,8 +44,12 @@ class PlayerPage extends ConsumerStatefulWidget {
 class _PlayerPageState extends ConsumerState<PlayerPage> {
   static const _progressInterval = Duration(seconds: 30);
 
-  final PlaybackProgressService _progress = PlaybackProgressService();
-  final SubtitlePreferenceService _subtitlePref = SubtitlePreferenceService();
+  late final PlaybackProgressService _progress = ref.read(
+    playbackProgressServiceProvider,
+  );
+  late final SubtitlePreferenceService _subtitlePref = ref.read(
+    subtitlePreferenceServiceProvider,
+  );
   final SubtitleMatcher _matcher = const SubtitleMatcher();
 
   late final Player _player = Player(
@@ -68,7 +73,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _loading = true;
   AppFailure? _error;
   String? _selectedSubtitleId;
-  String? _loadingSubtitleId;
   bool _locked = false;
   double _speed = 1.0;
 
@@ -351,55 +355,75 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         '${hex((color.b * 255).round())}';
   }
 
-  List<_SubtitleChoice> get _choices {
-    final list = <_SubtitleChoice>[const _OffChoice(), const _AutoChoice()];
-    for (final t in _tracks.subtitle) {
-      if (t.id == 'auto' || t.id == 'no') continue;
-      list.add(_EmbeddedChoice(track: t));
+  /// Subtitle rows for the picker, built from the demuxer's tracks and the
+  /// external files found next to the video.
+  List<ChoiceGroup> get _subtitleGroups => buildSubtitleChoices(
+    embedded: [
+      for (final t in _tracks.subtitle)
+        (id: t.id, title: t.title, language: t.language),
+    ],
+    external: _externalSubs,
+  );
+
+  /// Every subtitle id the picker can offer (including off/auto), used to
+  /// validate a restored preference.
+  bool _hasSubtitleChoice(String id) {
+    for (final group in _subtitleGroups) {
+      for (final choice in group.choices) {
+        if (choice.id == id) return true;
+      }
     }
-    for (final s in _externalSubs) {
-      list.add(_ExternalChoice(item: s));
-    }
-    return list;
+    return false;
   }
 
-  Future<void> _applySubtitle(
-    _SubtitleChoice choice, {
+  Future<void> _applySubtitleId(
+    String id, {
     bool silent = false,
     bool persist = true,
   }) async {
-    setState(() => _loadingSubtitleId = choice.id);
     try {
-      switch (choice) {
-        case _OffChoice():
-          await _player.setSubtitleTrack(SubtitleTrack.no());
-        case _AutoChoice():
-          await _player.setSubtitleTrack(SubtitleTrack.auto());
-        case _EmbeddedChoice(:final track):
-          await _player.setSubtitleTrack(track);
-        case _ExternalChoice(:final item):
-          final url = await ref
-              .read(graphServiceProvider)
-              .getDownloadUrl(item.id);
-          await _player.setSubtitleTrack(
-            SubtitleTrack.uri(url, title: item.name),
+      if (id == subtitleOffId) {
+        await _player.setSubtitleTrack(SubtitleTrack.no());
+      } else if (id == subtitleAutoId) {
+        await _player.setSubtitleTrack(SubtitleTrack.auto());
+      } else if (id.startsWith('embedded:')) {
+        final target = id.substring('embedded:'.length);
+        final track = _firstWhereOrNull(
+          _tracks.subtitle,
+          (t) => t.id == target,
+        );
+        if (track == null) {
+          throw const PlaybackFailure(
+            message: 'That subtitle track is no longer available.',
           );
+        }
+        await _player.setSubtitleTrack(track);
+      } else if (id.startsWith('external:')) {
+        final targetId = id.substring('external:'.length);
+        final item = _firstWhereOrNull(_externalSubs, (s) => s.id == targetId);
+        if (item == null) {
+          throw const PlaybackFailure(
+            message: 'That subtitle file is no longer available.',
+          );
+        }
+        final url = await ref
+            .read(graphServiceProvider)
+            .getDownloadUrl(item.id);
+        await _player.setSubtitleTrack(
+          SubtitleTrack.uri(url, title: item.name),
+        );
       }
       if (!mounted) return;
-      setState(() {
-        _selectedSubtitleId = choice.id;
-        _loadingSubtitleId = null;
-      });
+      setState(() => _selectedSubtitleId = id);
       // Remember the choice so re-opening this video restores it. Auto-loads
       // aren't persisted: they re-evaluate on every open (so a newly added
       // Simplified Chinese subtitle wins next time), while explicit user
       // picks stay fixed.
       if (persist) {
-        unawaited(_subtitlePref.save(widget.video.id, choice.id));
+        unawaited(_subtitlePref.save(widget.video.id, id));
       }
     } catch (_) {
       if (!mounted) return;
-      setState(() => _loadingSubtitleId = null);
       // Silent restoration failures (stale track id, expired subtitle URL)
       // shouldn't pester the user — fall back to the default silently.
       if (silent) return;
@@ -425,12 +449,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (savedId == null) {
       final auto = _matcher.pickForAutoLoad(widget.video, _externalSubs);
       if (auto != null) {
-        for (final c in _choices) {
-          if (c is _ExternalChoice && c.item.id == auto.id) {
-            await _applySubtitle(c, silent: true, persist: false);
-            break;
-          }
-        }
+        await _applySubtitleId(
+          externalChoiceId(auto.id),
+          silent: true,
+          persist: false,
+        );
       }
       return;
     }
@@ -448,16 +471,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       if (!mounted || _disposed || _selectedSubtitleId != null) return;
     }
 
-    _SubtitleChoice? choice;
-    for (final c in _choices) {
-      if (c.id == savedId) {
-        choice = c;
-        break;
-      }
+    if (isSubtitleChoiceId(savedId) && _hasSubtitleChoice(savedId)) {
+      await _applySubtitleId(savedId, silent: true);
     }
-    if (choice != null) {
-      await _applySubtitle(choice, silent: true);
+  }
+
+  T? _firstWhereOrNull<T>(Iterable<T> items, bool Function(T) test) {
+    for (final item in items) {
+      if (test(item)) return item;
     }
+    return null;
   }
 
   // --- Speed --------------------------------------------------------------
@@ -561,7 +584,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           // Lock indicator + unlock button
           if (_locked)
             Positioned.fill(
-              child: _LockScreen(
+              child: PlayerLockOverlay(
                 onUnlock: () {
                   setState(() => _locked = false);
                 },
@@ -572,7 +595,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             Positioned(
               bottom: 122,
               right: 16,
-              child: _SpeedBadge(speed: _speed),
+              child: PlayerSpeedBadge(speed: _speed),
             ),
         ],
       );
@@ -592,7 +615,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 top: 0,
                 left: 0,
                 right: 0,
-                child: _TopBar(
+                child: PlayerTopBar(
                   title: widget.video.name,
                   onClose: () => Navigator.of(context).pop(),
                 ),
@@ -687,133 +710,49 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _showSubtitlePicker() async {
-    final choices = _choices;
-    final selectedId = _selectedSubtitleId;
-
-    final groups = <String, List<_SubtitleChoice>>{
-      'State': [
-        for (final c in choices)
-          if (c is _OffChoice || c is _AutoChoice) c,
-      ],
-      'Embedded tracks': [
-        for (final c in choices)
-          if (c is _EmbeddedChoice) c,
-      ],
-      'External subtitles': [
-        for (final c in choices)
-          if (c is _ExternalChoice) c,
-      ],
-    };
-
-    final result = await _showChoiceDialog(
+    final result = await showChoiceDialog(
+      context,
       title: 'Subtitles',
-      selectedId: selectedId,
-      groups: groups,
-      footer: 'Appearance',
+      groups: _subtitleGroups,
+      selectedId: _selectedSubtitleId,
+      appearanceLabel: 'Appearance',
     );
     if (!mounted || result == null) return;
-    if (result is String) {
-      // The footer action: open the full-screen appearance editor.
-      if (result == _kAppearanceAction) {
-        await Navigator.of(context).push<void>(
-          SModalPageRoute<void>(
-            builder: (_) => const SubtitleStyleEditorPage(),
-          ),
-        );
-      }
+    if (result == choiceDialogAppearance) {
+      // The footer action opens the full-screen appearance editor.
+      await Navigator.of(context).push<void>(
+        SModalPageRoute<void>(
+          builder: (_) => const SubtitleStyleEditorPage(),
+        ),
+      );
       return;
     }
-    await _applySubtitle(result as _SubtitleChoice);
+    await _applySubtitleId(result);
   }
 
   Future<void> _showAudioPicker() async {
-    final tracks = _audioTracks;
-    // The row ids are prefixed, so build the same id the choice reports.
-    final selectedId = 'audio:${_currentTrack.audio.id}';
-    final result = await _showChoiceDialog(
+    final result = await showChoiceDialog(
+      context,
       title: 'Audio track',
-      selectedId: selectedId,
-      groups: {
-        'Tracks': [
-          for (final t in tracks) _AudioChoice(track: t),
-        ],
-      },
-      footer: null,
+      groups: buildAudioChoices([
+        for (final t in _audioTracks)
+          (id: t.id, title: t.title, language: t.language),
+      ]),
+      // The row ids are prefixed, so build the same id the choice reports.
+      selectedId: audioChoiceId(_currentTrack.audio.id),
     );
     if (!mounted || result == null) return;
-    if (result is _AudioChoice) {
-      unawaited(_applyAudioTrack(result.track));
+    if (result.startsWith('audio:')) {
+      unawaited(_applyAudioTrackId(result.substring('audio:'.length)));
     }
   }
 
-  /// One dialog for both pickers: a flush white list of 48dp rows whose
-  /// pressed fill is the dialog button grey, and a 54dp action row.
-  Future<Object?> _showChoiceDialog({
-    required String title,
-    required String? selectedId,
-    required Map<String, List<_Choice>> groups,
-    required String? footer,
-  }) {
-    final rows = <Widget>[];
-    for (final entry in groups.entries) {
-      final items = entry.value;
-      if (items.isEmpty) continue;
-      if (rows.isNotEmpty) rows.add(const SDivider(indent: 16));
-      rows.add(_GroupLabel(entry.key));
-      for (var i = 0; i < items.length; i++) {
-        final choice = items[i];
-        rows.add(
-          _ChoiceRow(
-            icon: choice.icon,
-            label: choice.label,
-            selected: choice.id == selectedId,
-            loading: choice.id == _loadingSubtitleId,
-            onTap: () => Navigator.of(context, rootNavigator: true).pop(
-              choice,
-            ),
-          ),
-        );
-        if (i < items.length - 1) rows.add(const SDivider(indent: 16));
-      }
+  Future<void> _applyAudioTrackId(String trackId) async {
+    final track = _firstWhereOrNull(_audioTracks, (t) => t.id == trackId);
+    if (track == null) {
+      showSToast(context, 'That audio track is no longer available', bottom: 118);
+      return;
     }
-
-    return Navigator.of(context, rootNavigator: true).push<Object?>(
-      SDialogRoute<Object?>(
-        barrierColor: context.sp.scrim,
-        builder: (ctx) => Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: SDialog(
-              title: title,
-              flushBody: true,
-              body: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 340),
-                child: ListView(
-                  shrinkWrap: true,
-                  padding: EdgeInsets.zero,
-                  children: rows,
-                ),
-              ),
-              actions: [
-                if (footer != null)
-                  SDialogButton(
-                    footer,
-                    onTap: () => Navigator.of(ctx).pop(_kAppearanceAction),
-                  ),
-                SDialogButton(
-                  'Cancel',
-                  primary: true,
-                  onTap: () => Navigator.of(ctx).pop(),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _applyAudioTrack(AudioTrack track) async {
     try {
       await _player.setAudioTrack(track);
       // _trackSub updates _currentTrack and rebuilds, so the checkmark moves
@@ -823,322 +762,4 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       showSToast(context, 'Could not switch audio track', bottom: 118);
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// Top bar
-// ---------------------------------------------------------------------------
-
-class _TopBar extends StatelessWidget {
-  const _TopBar({required this.title, required this.onClose});
-
-  final String title;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 6, 16, 10),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Colors.black.withValues(alpha: 0.55), Colors.transparent],
-        ),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            SBarGlyphButton(
-              icon: SGlyphs.close,
-              size: 20,
-              color: Colors.white,
-              onTap: onClose,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  shadows: [
-                    Shadow(
-                      blurRadius: 8,
-                      color: Colors.black.withValues(alpha: 0.54),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Speed badge
-// ---------------------------------------------------------------------------
-
-class _SpeedBadge extends StatelessWidget {
-  const _SpeedBadge({required this.speed});
-
-  final double speed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(SRadii.md),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.15),
-          width: SHair.xs,
-        ),
-      ),
-      child: Text(
-        '${speed}x',
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Lock screen overlay
-// ---------------------------------------------------------------------------
-
-class _LockScreen extends StatefulWidget {
-  const _LockScreen({required this.onUnlock});
-
-  final VoidCallback onUnlock;
-
-  @override
-  State<_LockScreen> createState() => _LockScreenState();
-}
-
-class _LockScreenState extends State<_LockScreen> {
-  bool _showUnlock = true;
-  Timer? _hideTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _startHideTimer();
-  }
-
-  void _startHideTimer() {
-    _hideTimer?.cancel();
-    _hideTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted) setState(() => _showUnlock = false);
-    });
-  }
-
-  void _onTap() {
-    setState(() => _showUnlock = true);
-    _startHideTimer();
-  }
-
-  @override
-  void dispose() {
-    _hideTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: _onTap,
-      child: ColoredBox(
-        color: Colors.transparent,
-        child: Center(
-          child: AnimatedOpacity(
-            opacity: _showUnlock ? 1 : 0,
-            duration: const Duration(milliseconds: 300),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  SGlyphs.lock,
-                  size: 44,
-                  color: Colors.white.withValues(alpha: 0.5),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: 180,
-                  child: SButton(
-                    'Unlock',
-                    kind: SButtonKind.sheet,
-                    onPressed: widget.onUnlock,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Dialog rows
-// ---------------------------------------------------------------------------
-
-/// Header of a group inside the choice dialog.
-class _GroupLabel extends StatelessWidget {
-  const _GroupLabel(this.label);
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    height: 28,
-    alignment: Alignment.centerLeft,
-    padding: const EdgeInsets.symmetric(horizontal: 16),
-    color: context.sp.containerMisc,
-    child: Text(
-      label,
-      style: TextStyle(fontSize: 12, color: context.sp.subtitle),
-    ),
-  );
-}
-
-class _ChoiceRow extends StatelessWidget {
-  const _ChoiceRow({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.loading,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final bool loading;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.sp;
-    return SPressable(
-      onTap: onTap,
-      builder: (context, pressed) => Container(
-        height: 48,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        color: pressed ? p.dialogActionPressed : Colors.transparent,
-        child: Row(
-          children: [
-            Icon(icon, size: 18, color: selected ? p.accent : p.icon),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: pressed
-                      ? p.titleOther
-                      : (selected ? p.accent : p.title),
-                ),
-              ),
-            ),
-            if (loading)
-              SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: p.accent,
-                ),
-              )
-            else if (selected)
-              Icon(SGlyphs.check, size: 16, color: p.accent),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Subtitle / audio choices
-// ---------------------------------------------------------------------------
-
-sealed class _Choice {
-  const _Choice();
-  String get id;
-  String get label;
-  IconData get icon;
-}
-
-sealed class _SubtitleChoice extends _Choice {
-  const _SubtitleChoice();
-}
-
-class _OffChoice extends _SubtitleChoice {
-  const _OffChoice();
-  @override
-  String get id => 'off';
-  @override
-  String get label => 'Off';
-  @override
-  IconData get icon => SGlyphs.close;
-}
-
-class _AutoChoice extends _SubtitleChoice {
-  const _AutoChoice();
-  @override
-  String get id => 'auto';
-  @override
-  String get label => 'Auto';
-  @override
-  IconData get icon => SGlyphs.sparkle;
-}
-
-class _EmbeddedChoice extends _SubtitleChoice {
-  const _EmbeddedChoice({required this.track});
-  final SubtitleTrack track;
-  @override
-  String get id => 'embedded:${track.id}';
-  @override
-  String get label => track.title ?? track.language ?? 'Track ${track.id}';
-  @override
-  IconData get icon => SGlyphs.subtitles;
-}
-
-class _ExternalChoice extends _SubtitleChoice {
-  const _ExternalChoice({required this.item});
-  final DriveItem item;
-  @override
-  String get id => 'external:${item.id}';
-  @override
-  String get label => item.name;
-  @override
-  IconData get icon => SGlyphs.file;
-}
-
-class _AudioChoice extends _Choice {
-  const _AudioChoice({required this.track});
-  final AudioTrack track;
-  @override
-  String get id => 'audio:${track.id}';
-  @override
-  String get label => track.title ?? track.language ?? 'Track ${track.id}';
-  @override
-  IconData get icon => SGlyphs.headphones;
 }

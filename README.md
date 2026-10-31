@@ -9,6 +9,10 @@ in your OneDrive — folder browsing plus streaming playback powered by
 - Browse OneDrive folders; video files are highlighted
 - Stream videos directly (no full download) with seek support
 - Stays signed in across restarts (tokens persisted + auto-refreshed)
+- **Sessions are stored securely**: tokens live in the Android Keystore
+  (AES-GCM) or Windows DPAPI, never in plain preferences; an expired access
+  token is refreshed transparently and a revoked session returns you to the
+  sign-in screen instead of an error page
 - **Resume playback**: remembers where you left off and auto-seeks back on
   reopen; in-progress videos show a "Resume from mm:ss" label and a progress
   bar in the browser (long-press a video to clear its resume position)
@@ -21,6 +25,11 @@ in your OneDrive — folder browsing plus streaming playback powered by
 - **Customizable subtitle appearance**: font size, weight, text color,
   background (on/off + color), and outline (on/off + color + width). Choices
   are previewed live and persisted across restarts
+- **Search the current folder** from the app bar; the listing is filtered
+  instantly on-device
+- **Desktop playback**: space/K play-pause, J/L or arrows to seek, ↑/↓ volume,
+  M mute, F fullscreen, C subtitles, Esc to leave; controls stay on screen
+  while paused
 - **Smartisan OS (锤子 / 坚果) UI**: flat `#F5F5F5` page with white grouped
   cards, hairline 0.8dp borders, one low-saturation blue accent, centred bar
   titles, a 54dp bottom navigation, segmented tabs, an inset slider, a real
@@ -42,16 +51,22 @@ lib/
     smartisan_glyphs.dart       #   166 solid glyphs (SGlyphs)
   config/auth_config.dart       # Azure client_id, tenant, scopes
   core/
+    errors/app_failure.dart     # user-facing failure model (network/auth/404/5xx)
     models/
       auth_tokens.dart          # token model
       drive_item.dart           # OneDrive item model (video/subtitle helpers)
       subtitle_style.dart       # subtitle appearance + persistence
     services/
-      auth_service.dart         # device code flow + token refresh
+      auth_service.dart         # device code flow, token refresh, session events
+      auth_interceptor.dart     # bearer token + transparent 401 refresh/retry
       graph_service.dart        # Graph API (list children / streaming URL)
+      secret_store.dart         # platform secret store (Keystore / DPAPI)
+      secret_store_android.dart #   AES-GCM via the Android Keystore
+      secret_store_windows.dart #   DPAPI via dart:ffi (no plugin needed)
+      token_storage.dart        # tokens in the secret store + legacy migration
       subtitle_service.dart     # match external subtitles to a video
-      token_storage.dart        # SharedPreferences persistence
       playback_progress_service.dart  # resume-position persistence
+      subtitle_preference_service.dart
     theme/
       smartisan_kit.dart        # one import for the whole kit
       app_theme.dart            # accent + light/dark themes + player surface
@@ -63,8 +78,8 @@ lib/
       states.dart               # EmptyState / ErrorState / LoadingState
   providers/
     auth_provider.dart          # auth state (Riverpod Notifier)
-    drive_provider.dart         # folder navigation state
-    playback_provider.dart      # resume-position state
+    drive_provider.dart         # folder stack + listings cache
+    playback_provider.dart      # resume-position state + shared services
     folder_provider.dart        # chosen video-library folder
     subtitle_style_provider.dart
   pages/
@@ -74,7 +89,12 @@ lib/
     recent_page.dart            # recently played (swipe right to remove)
     settings_page.dart          # account, folder, subtitle look, sign out
     folder_picker_page.dart     # video-library root picker
-    player_page.dart            # media_kit player + subtitle/audio/speed
+    search_page.dart            # on-device search in the current folder
+    player_page.dart            # player state machine + layout
+    player/
+      subtitle_choices.dart     # pure choice model (off/auto/embedded/external)
+      choice_dialog.dart        # subtitle / audio picker dialog
+      player_chrome.dart        # top bar, lock overlay, speed badge
   widgets/
     subtitle_controls.dart      # player control bar (Smartisan glyphs)
     player_gesture_overlay.dart # seek / brightness / volume drags
@@ -149,12 +169,16 @@ flutter run -d android
 ## Roadmap / ideas
 - ✅ Resume playback position (断点续播) — done
 - ✅ Subtitle picker / external subtitle support — done
-- Search and "recently played"
+- ✅ Recently played tab + per-folder search — done
+- ✅ Secure token storage, transparent token refresh — done
 - Thumbnails / poster wall (刮削 metadata)
 - Multiple accounts
+- Localisation (the UI is English-only today) and offline downloads
 
 > `flutter analyze` passes with **no issues**, `flutter test` passes
-> (**89/89**, including layout smoke tests for every screen at phone and
-> desktop widths), and `flutter build windows --debug` completes. Android has
-> not been run on a device yet — run `flutter run -d android` to build and
-> launch.
+> (**133/133**, covering services, providers, the DPAPI bindings and layout
+> smoke tests for every screen at phone and desktop widths), and
+> `flutter build windows --debug` completes. CI runs analyze + test on every
+> push (`.github/workflows/ci.yml`). Android compiles
+> (`:app:compileDebugKotlin`) but has not been run on a device yet — run
+> `flutter run -d android` to build and launch.

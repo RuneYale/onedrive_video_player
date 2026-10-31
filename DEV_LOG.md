@@ -1,7 +1,7 @@
 # OneDrive Video Player — 开发进度日志
 
 > 这是一份"接续手册",记录当前项目状态、已完成工作、卡点、以及明天怎么接着干。
-> 最后更新:2026/10/18(第二十一节 Smartisan OS UI 重构:fluent_ui 全部移除,锤子风格组件体系接管整站;analyze 零问题 + 89/89 测试通过 + Windows 构建跑通)
+> 最后更新:2026/10/31(第二十二节 优化清单 P0/P1/P2 全部落地:安全存储 + 会话恢复 + 容错 + 导航缓存 + 播放器拆分 + CI;analyze 零问题 + 133/133 测试 + Windows 构建 + Android Kotlin 编译通过)
 
 ---
 
@@ -15,7 +15,7 @@
 
 ## 二、当前状态(一句话)
 
-**整站已从 fluent_ui(WinUI)重构为 Smartisan OS(锤子/坚果)风格:页面灰底 + 白色分组卡片 + 极细描边 + 单一蓝色强调 + 分段 Tab / 真滚轮 / 右滑删除 / 卡片列表,动效走横推与底部升起。`flutter analyze` 零问题,`flutter test` 89/89 通过,Windows 构建跑通。**
+**Smartisan OS 风格整站 + 一轮 P0/P1/P2 优化:令牌走 Keystore/DPAPI、401 自动刷新、坏数据容错、文件夹快照缓存与滚动保持、播放器快捷键与暂停常显、播放器拆分 + CI。`flutter analyze` 零问题,`flutter test` 133/133 通过,Windows 构建与 Android Kotlin 编译均通过。**
 
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
@@ -792,3 +792,37 @@ D:\code\project\onedrive_video_player\
 - `pubspec.yaml` 的 `assets:` 里没有多余资源,字体只走 `fonts:` 段。
 
 *下次接续:① Windows 实跑走一遍播放器与滑动手势(上面"遗留"清单);② Android 构建 + 真机过一遍(字形字体、底部安全区);③ 三处 kit 补丁若上游更新需要重新打;④ Smartisan UI Kit 为 CC BY 4.0(作者 Paix Chan),对外发布时保留 README 里的署名。*
+
+---
+
+## 二十二、2026/10/31 开发记录:按优先级落地"设计/代码优化清单"(P0+P1+P2)
+
+**P0 — 安全与数据正确性**
+
+1. **令牌不再明文落盘**:`TokenStorage` 改为走 `SecretStore` 抽象——Android 用 Keystore(AES-GCM,`MainActivity` 新增 `odplayer/secure` 通道,仅密文进私有 prefs),Windows 用 DPAPI(`dart:ffi` 直调 `CryptProtectData`,密文进 prefs)。启动时把旧版 SharedPreferences 里的明文 token 迁移过去并删除旧键。`AndroidManifest` 关闭 `allowBackup`。
+   - 不用 `flutter_secure_storage`:它的 Windows 实现需要 Visual C++ ATL 头文件(`atlstr.h`),本机 VS 未装该组件,构建直接失败;自己调 DPAPI 零依赖、可测。
+2. **会话失效能回到登录页**:`AuthService.sessionExpired` 广播 + `AuthNotifier` 订阅;refresh token 被拒时清存储并切 `AuthUnauthenticated`。
+3. **401 自动恢复**:新增 `AuthInterceptor`(加 bearer、401 → 强制刷新一次 → 重放;`forceRefresh` 只在 token 仍是失败那个时才轮换,避免并发重复刷新;token 端点用 `kNoAuthRequest` 跳过,防递归)。
+4. **错误模型**:新增 `AppFailure`(network/auth/not authenticated/not found/rate limit/server/playback/unknown),`GraphService` 统一映射;UI 显示人话 + 可选技术细节 + 第二动作(如"换文件夹")。
+5. **坏数据不再清空历史**:播放进度与字幕偏好都改成逐条容错 + 版本化信封(`v`/`entries`),兼容旧扁平格式;字幕偏好上限 500 条、按时间 LRU 淘汰。
+
+**P1 — 体验与性能**
+
+6. **文件夹快照 + 缓存**:`DriveState` 的栈元素变成 `DriveSnapshot{folder, items}`,`goBack` 立刻用父层快照渲染并后台刷新;LRU 缓存 30 个目录,重进免白屏;刷新失败保留现有行、只弹 Toast;`SCardList` 用 `PageStorageKey(folderId)` 记住每个目录的滚动位置。
+7. **`$select` + 回退**:Graph 只取用得到的字段,若服务端拒绝(400)自动退回全量;缩略图 `memCacheWidth` 按列表尺寸解码。
+8. **播放器**:桌面快捷键(Space/K、J/L、←→、↑↓、M、F、C、Esc);暂停时控制条常显;续播落盘改为 30s + 暂停时 + 退出时(原来每 5s 一次整表读改写)。
+
+**P2 — 工程化**
+
+9. **播放器拆分**:新增 `pages/player/subtitle_choices.dart`(纯选择模型,无 media_kit 依赖)、`choice_dialog.dart`(选择对话框)、`player_chrome.dart`(顶栏/锁屏/倍速徽标);`player_page.dart` 1168 → 约 700 行;服务实例改从 provider 拿。
+10. **`lib/smartisan/UPSTREAM.md`** 记录来源/许可/三处本地补丁;`analysis_options.yaml` 排除该目录;新增 `.github/workflows/ci.yml`(windows runner:pub get → analyze → test)。
+11. **无障碍/缩放**:图标按钮加 `Semantics`(顶栏、播放器控制、底栏),文本缩放夹到 1.3 倍避免固定行高溢出。
+12. **文件夹内搜索**:`search_page.dart`,当前目录客户端过滤,顶栏放大镜入口。
+
+**验证**:`flutter analyze` 零问题;`flutter test` **133/133**(新增 app_failure / auth_interceptor / token_storage / drive_provider / subtitle_choices / secret_store_windows 等用例,含 DPAPI 真实加解密);`flutter build windows --debug` 成功;`gradlew :app:compileDebugKotlin` BUILD SUCCESSFUL。
+
+**这一轮没做(有意留)**:
+- **i18n**:全站仍是英文硬编码;接 ARB 要动 ~80 条文案,适合单独一个 PR,别和逻辑改动混在一起。
+- **离线下载 / 多账户 / 海报墙**:功能级、需求未定。
+- **播放器完整 controller 化**:目前只把"纯逻辑 + 控件"拆出去;真正的 `PlayerController`(可用 fake Player 测续播/字幕恢复)还差一个播放器抽象层,值得单独立项。
+- **`dart format` 门禁**:仓库目前不是 format-clean(44 个文件会被改),而且 vendored kit 要保持与上游一致,所以 CI 只跑 analyze + test。

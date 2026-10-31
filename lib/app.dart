@@ -25,6 +25,13 @@ class OneDriveVideoApp extends ConsumerWidget {
       // Rubber-band overscroll, no Material glow; mouse dragging enabled so
       // the desktop build scrolls like a touch screen.
       scrollBehavior: const SmartisanScrollBehavior(desktopDrag: true),
+      // Rows and bars have fixed heights by design (56/48/54dp). Text still
+      // honours the system font scale, but capping it keeps very large
+      // accessibility sizes from overflowing those rows.
+      builder: (context, child) => MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 1.3,
+        child: child ?? const SizedBox.shrink(),
+      ),
       home: const _AuthGate(),
     );
   }

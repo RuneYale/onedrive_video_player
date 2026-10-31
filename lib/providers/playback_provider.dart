@@ -3,9 +3,15 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/services/playback_progress_service.dart';
+import '../core/services/subtitle_preference_service.dart';
 
+// Stateless services with process-wide serialized writes; the player reads
+// them from here instead of constructing its own copies.
 final playbackProgressServiceProvider =
     Provider<PlaybackProgressService>((ref) => const PlaybackProgressService());
+
+final subtitlePreferenceServiceProvider =
+    Provider<SubtitlePreferenceService>((ref) => const SubtitlePreferenceService());
 
 /// Holds the full `{ itemId: PlaybackProgress }` map in memory so the browser
 /// can show resume indicators without an async lookup per row. Call [reload]

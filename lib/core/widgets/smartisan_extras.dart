@@ -15,6 +15,7 @@ class SBarGlyphButton extends StatelessWidget {
     required this.onTap,
     this.size = 24,
     this.color,
+    this.semanticLabel,
   });
 
   final IconData icon;
@@ -22,26 +23,33 @@ class SBarGlyphButton extends StatelessWidget {
   final double size;
   final Color? color;
 
+  /// Screen-reader label (icon-only buttons have no text of their own).
+  final String? semanticLabel;
+
   @override
   Widget build(BuildContext context) {
     final base = color ?? IconTheme.of(context).color ?? context.sp.icon;
     final light = base.computeLuminance() > .6;
-    return SPressable(
-      onTap: onTap,
-      builder: (context, p) => AnimatedScale(
-        scale: p ? SMotion.barIconScale : 1,
-        duration: SMotion.barIconSpring,
-        curve: Curves.easeOutBack,
-        child: Padding(
-          padding: const EdgeInsets.all(2),
-          child: Icon(
-            icon,
-            size: size,
-            color: !p
-                ? base
-                : light
-                ? base.withValues(alpha: .7)
-                : Color.lerp(base, const Color(0xFF000000), .35),
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: SPressable(
+        onTap: onTap,
+        builder: (context, p) => AnimatedScale(
+          scale: p ? SMotion.barIconScale : 1,
+          duration: SMotion.barIconSpring,
+          curve: Curves.easeOutBack,
+          child: Padding(
+            padding: const EdgeInsets.all(2),
+            child: Icon(
+              icon,
+              size: size,
+              color: !p
+                  ? base
+                  : light
+                  ? base.withValues(alpha: .7)
+                  : Color.lerp(base, const Color(0xFF000000), .35),
+            ),
           ),
         ),
       ),
@@ -80,47 +88,52 @@ class SGlyphBottomNav extends StatelessWidget {
       children: [
         for (var i = 0; i < items.length; i++) ...[
           if (i > 0) const SizedBox(width: 48),
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => onTap(i),
-            child: SizedBox(
-              width: 38,
-              height: 40,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  SizedBox(
-                    height: 28,
-                    child: Center(
-                      child: Icon(
-                        items[i].icon,
-                        size: i == currentIndex ? 28 : 22,
-                        color: i == currentIndex
-                            ? context.sp.titleOther
-                            : context.sp.iconDisabled,
+          Semantics(
+            button: true,
+            selected: i == currentIndex,
+            label: items[i].label,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => onTap(i),
+              child: SizedBox(
+                width: 38,
+                height: 40,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    SizedBox(
+                      height: 28,
+                      child: Center(
+                        child: Icon(
+                          items[i].icon,
+                          size: i == currentIndex ? 28 : 22,
+                          color: i == currentIndex
+                              ? context.sp.titleOther
+                              : context.sp.iconDisabled,
+                        ),
                       ),
                     ),
-                  ),
-                  Text(
-                    items[i].label,
-                    maxLines: 1,
-                    softWrap: false,
-                    overflow: TextOverflow.visible,
-                    style: TextStyle(
-                      fontSize: 8,
-                      height: 1.2,
-                      color: i == currentIndex
-                          ? context.sp.titleOther
-                          : context.sp.subtitleOther,
-                      fontFamilyFallback: const [
-                        'Smartisan Compact',
-                        'Inter',
-                        'Noto Sans CJK SC',
-                        'Microsoft YaHei',
-                      ],
+                    Text(
+                      items[i].label,
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.visible,
+                      style: TextStyle(
+                        fontSize: 8,
+                        height: 1.2,
+                        color: i == currentIndex
+                            ? context.sp.titleOther
+                            : context.sp.subtitleOther,
+                        fontFamilyFallback: const [
+                          'Smartisan Compact',
+                          'Inter',
+                          'Noto Sans CJK SC',
+                          'Microsoft YaHei',
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

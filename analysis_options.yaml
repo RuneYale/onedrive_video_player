@@ -12,6 +12,10 @@ include: package:flutter_lints/flutter.yaml
 analyzer:
   exclude:
     - build/**
+    # Vendored Smartisan OS kit: kept byte-identical to the upstream skill except
+    # for the three patches documented in lib/smartisan/UPSTREAM.md, so its
+    # style is not forced through this project's lint set.
+    - lib/smartisan/**
     - android/**
     - ios/**
     - web/**

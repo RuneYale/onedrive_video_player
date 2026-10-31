@@ -16,6 +16,7 @@ import '../providers/drive_provider.dart';
 import '../providers/playback_provider.dart';
 import 'folder_picker_page.dart';
 import 'player_page.dart';
+import 'search_page.dart';
 
 class BrowserPage extends ConsumerStatefulWidget {
   const BrowserPage({super.key});
@@ -53,6 +54,18 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
         await ref.read(playbackProgressProvider.notifier).reload();
       }
     }
+  }
+
+  Future<void> _search() async {
+    final picked = await Navigator.of(context).push<DriveItem>(
+      SModalPageRoute<DriveItem>(
+        builder: (_) => FolderSearchPage(
+          title: ref.read(driveProvider).current?.name ?? 'Videos',
+          items: ref.read(driveProvider).items,
+        ),
+      ),
+    );
+    if (picked != null && mounted) unawaited(_openItem(picked));
   }
 
   Future<void> _pickFolder() async {
@@ -116,7 +129,16 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
             title: drive.current?.name ?? 'Videos',
             onBack: drive.canGoBack ? notifier.goBack : null,
             actions: [
-              SBarGlyphButton(icon: SGlyphs.folder, onTap: _pickFolder),
+              SBarGlyphButton(
+                icon: SGlyphs.search,
+                semanticLabel: 'Search this folder',
+                onTap: () => unawaited(_search()),
+              ),
+              SBarGlyphButton(
+                icon: SGlyphs.folder,
+                semanticLabel: 'Change video folder',
+                onTap: _pickFolder,
+              ),
               if (drive.refreshing)
                 Padding(
                   padding: const EdgeInsets.all(4),
@@ -132,11 +154,13 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
               else
                 SBarGlyphButton(
                   icon: SGlyphs.refresh,
+                  semanticLabel: 'Refresh folder',
                   onTap: notifier.refresh,
                 ),
               Builder(
                 builder: (ctx) => SBarGlyphButton(
                   icon: SGlyphs.more,
+                  semanticLabel: 'More actions',
                   onTap: () => unawaited(
                     showSContextMenu(
                       ctx,
